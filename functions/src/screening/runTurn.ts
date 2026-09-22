@@ -28,6 +28,14 @@ function fallbackTurn(previousRisk: { score: number; tactics: Tactic[] } | undef
   };
 }
 
+// 02-FIX: the standard line spoken whenever this module OVERRIDES Claude's own
+// recommendedAction to 'verify' because the caller's claimed identity matched a real
+// household member -- keeps the caller on the line instead of whatever ending/declining
+// line Claude generated under the assumption it was ending the call. Only used when the
+// override actually changes the action (see below); if Claude already said 'verify' on
+// its own, its own reply is kept as-is.
+const FAMILY_VERIFY_REPLY = "One moment, I'm checking with the family.";
+
 export interface RunTurnOptions {
   callId: string;
   householdId: string;
@@ -115,7 +123,44 @@ export async function runTurn(opts: RunTurnOptions): Promise<RunTurnResult> {
     turn = fallbackTurn(callData?.risk);
   }
 
-  const memberId = turn.claimedIdentity ? await matchIdentity(opts.householdId, turn.claimedIdentity) : undefined;
+  // 02-FIX: carry a claimed identity forward across turns. Claude's structured output
+  // only reports claimedIdentity on the turn it's actually stated (or wherever it
+  // happens to repeat it); `risk` is a full-object overwrite below, not a merge, so a
+  // later turn that omits claimedIdentity would otherwise silently erase an
+  // already-established claim -- which is exactly what happened in the live bug this
+  // fixes: a caller said "it's Brenden" on turn 1, then delivered the scam script on
+  // turn 2 without repeating the name, and the (then per-turn-doc) code had no memory of
+  // the earlier claim when deciding whether to end the call.
+  const priorClaimedIdentity = (callData?.risk as { claimedIdentity?: string } | undefined)?.claimedIdentity;
+  const effectiveClaimedIdentity = turn.claimedIdentity ?? priorClaimedIdentity ?? null;
+  const memberId = effectiveClaimedIdentity
+    ? await matchIdentity(opts.householdId, effectiveClaimedIdentity)
+    : undefined;
+
+  // 02-FIX (policy): once a caller's claimed identity matches a real household member,
+  // ALWAYS hold the call for family verification -- never let the AI end the call on its
+  // own, regardless of risk score or what Claude itself recommended. Ending the call
+  // outright would foreclose the "real family member taps the verify prompt, lamp turns
+  // red" loop that is this product's core value; a human verification decision always
+  // outranks an AI-decided hangup. Only a genuinely unclaimed caller can be ended
+  // directly by the AI, and only at a high-confidence risk score.
+  let effectiveAction: RiskTurn['recommendedAction'];
+  let effectiveReply = turn.reply;
+  if (memberId) {
+    effectiveAction = 'verify';
+    if (turn.recommendedAction !== 'verify') {
+      // Claude generated its reply under a different assumption (e.g. an
+      // ending/declining line) -- replace it so the caller hears something consistent
+      // with the call actually staying open, not the farewell/decline Claude drafted.
+      effectiveReply = FAMILY_VERIFY_REPLY;
+    }
+  } else if (turn.recommendedAction === 'end' && turn.risk < 80) {
+    // No family claim and not a high-confidence scam signal -- a marginal 'end'
+    // recommendation should not hang up on what might just be a genuine stranger.
+    effectiveAction = 'continue';
+  } else {
+    effectiveAction = turn.recommendedAction;
+  }
 
   // Pitfall 1: arrayUnion() silently drops serverTimestamp() nested inside array elements —
   // use Date.now() epoch-ms for `at` (matches the locked CallTurn.at: number schema).
@@ -132,26 +177,26 @@ export async function runTurn(opts: RunTurnOptions): Promise<RunTurnResult> {
   const risk: Record<string, unknown> = {
     score: turn.risk,
     tactics: turn.tactics,
-    recommendedAction: turn.recommendedAction,
+    recommendedAction: effectiveAction,
     // OK here — risk is a top-level map field being update()d directly, not an array element.
     updatedAt: FieldValue.serverTimestamp(),
   };
-  if (turn.claimedIdentity) {
-    risk.claimedIdentity = turn.claimedIdentity;
+  if (effectiveClaimedIdentity) {
+    risk.claimedIdentity = effectiveClaimedIdentity;
   }
 
   const update: Record<string, unknown> = {
     turns: FieldValue.arrayUnion(
       { role: 'caller', text: opts.callerText, at: at1 } satisfies CallTurn,
-      { role: 'assistant', text: turn.reply, at: at2 } satisfies CallTurn,
+      { role: 'assistant', text: effectiveReply, at: at2 } satisfies CallTurn,
     ),
     risk,
   };
 
-  if (turn.recommendedAction === 'verify' && memberId) {
+  if (effectiveAction === 'verify' && memberId) {
     update.state = 'verifying';
     update.verification = { memberId, promptedAt: Date.now() };
-  } else if (turn.recommendedAction === 'end') {
+  } else if (effectiveAction === 'end') {
     // CALL-05: the AI's own end recommendation persists endedAt/outcome in the SAME write —
     // no external hangup signal (Twilio/webhook) is required for this path.
     update.state = 'scam';
@@ -161,5 +206,5 @@ export async function runTurn(opts: RunTurnOptions): Promise<RunTurnResult> {
 
   await callRef.update(update);
 
-  return { reply: turn.reply, endCall: turn.recommendedAction === 'end' };
+  return { reply: effectiveReply, endCall: effectiveAction === 'end' };
 }
