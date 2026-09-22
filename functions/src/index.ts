@@ -6,6 +6,8 @@ import { WaitlistPayload, CALL_STATES } from '@porchlight/shared';
 import { anthropicKey, twilioAccountSid, twilioAuthToken, elevenLabsKey, elevenLabsLlmToken } from './secrets.js';
 import { startSimulatedCall, simulateTurn } from './screening/simulateTurn.js';
 import { elevenlabsCustomLlm } from './screening/elevenlabsCustomLlm.js';
+import { elevenlabsPersonalization } from './screening/elevenlabsPersonalization.js';
+import { forceVerdict } from './screening/endCall.js';
 
 initializeApp();
 
@@ -20,7 +22,9 @@ const REGION = 'us-central1';
 export { anthropicKey, twilioAccountSid, twilioAuthToken, elevenLabsKey, elevenLabsLlmToken };
 export { startSimulatedCall, simulateTurn };
 // 02-02 Task 1: elevenlabsCustomLlm is the agent's entire brain, wired to runTurn (02-01).
-export { elevenlabsCustomLlm };
+// 02-02 Task 2: elevenlabsPersonalization creates the call doc at ring time; forceVerdict
+// is the debug/demo end-or-release path ahead of Phase 4's real verification UI.
+export { elevenlabsCustomLlm, elevenlabsPersonalization, forceVerdict };
 
 export const joinWaitlist = onCall({ region: REGION, cors: true, maxInstances: 5 }, async (req) => {
   const parsed = WaitlistPayload.safeParse(req.data);
