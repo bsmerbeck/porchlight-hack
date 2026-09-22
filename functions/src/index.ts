@@ -10,6 +10,8 @@ import { raiseFamilyAlert } from './alerts.js';
 import { elevenlabsCustomLlm } from './screening/elevenlabsCustomLlm.js';
 import { elevenlabsPersonalization } from './screening/elevenlabsPersonalization.js';
 import { forceVerdict } from './screening/endCall.js';
+import { startPasskeyRegistration, finishPasskeyRegistration } from './verification/passkeyRegistration.js';
+import { startPasskeyAuthentication, answerVerification } from './verification/passkeyAuthentication.js';
 
 initializeApp();
 
@@ -30,6 +32,11 @@ export { startSimulatedCall, simulateTurn };
 // 02-02 Task 2: elevenlabsPersonalization creates the call doc at ring time; forceVerdict
 // is the debug/demo end-or-release path ahead of Phase 4's real verification UI.
 export { elevenlabsCustomLlm, elevenlabsPersonalization, forceVerdict };
+// Phase 4 (Plan 01): VER-01 passkey enrollment. Owned by functions/src/verification/passkeyRegistration.ts.
+export { startPasskeyRegistration, finishPasskeyRegistration };
+// Phase 4 (Plan 01): VER-03/04/05 passkey authentication + verdict. Owned by
+// functions/src/verification/passkeyAuthentication.ts.
+export { startPasskeyAuthentication, answerVerification };
 
 export const joinWaitlist = onCall({ region: REGION, cors: true, maxInstances: 5 }, async (req) => {
   const parsed = WaitlistPayload.safeParse(req.data);
