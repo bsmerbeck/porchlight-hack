@@ -79,6 +79,9 @@ export async function runTurn(opts: RunTurnOptions): Promise<RunTurnResult> {
   const householdSnap = await householdRef.get();
   if (!householdSnap.exists && opts.householdId === DEMO_HOUSEHOLD_ID) {
     // Seed the demo household (D-06) so RISK-03 has something to match against.
+    // Mirrors resetDemo.ts's DEMO_HOUSEHOLD_BASELINE (the only other place this literal
+    // is defined), including the 05-ALLOWLIST allowlist entry, so a household seeded via
+    // this fallback path still supports the allowlist pass-through.
     await householdRef.set({
       name: 'Demo household',
       seniorName: 'Margaret',
@@ -91,6 +94,7 @@ export async function runTurn(opts: RunTurnOptions): Promise<RunTurnResult> {
           passkeyCredentialIds: [],
         },
       ],
+      allowlist: [{ number: '+14014979735', name: 'Brenden Smerbeck', relation: 'grandson' }],
     });
   }
 

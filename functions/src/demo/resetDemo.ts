@@ -19,8 +19,11 @@ const ResetDemoInput = z.object({
 
 // D-06 baseline shape for the single demo household -- mirrors runTurn.ts's own seeding
 // block (the only other place this literal is defined). A reset restores this baseline
-// (name/members[].name/aliases) but must NEVER clobber a member's already-enrolled
-// `passkeys` array -- see the merge below.
+// (name/members[].name/aliases/allowlist) but must NEVER clobber a member's
+// already-enrolled `passkeys` array -- see the merge below.
+// 05-ALLOWLIST Task 1: seeds the one real allowlisted caller for tonight's demo -- a
+// number that rings in gets the allowlist pass-through (elevenlabsPersonalization.ts)
+// instead of the screening/risk-scoring flow.
 const DEMO_HOUSEHOLD_BASELINE: HouseholdDoc = {
   name: 'Demo household',
   seniorName: 'Margaret',
@@ -33,6 +36,7 @@ const DEMO_HOUSEHOLD_BASELINE: HouseholdDoc = {
       passkeyCredentialIds: [],
     },
   ],
+  allowlist: [{ number: '+14014979735', name: 'Brenden Smerbeck', relation: 'grandson' }],
 };
 
 // ASVS L1 gate (T-05-01): constant-time comparison, wrong-length short-circuits before

@@ -23,11 +23,35 @@ export interface HouseholdMember {
   passkeys?: PasskeyCredential[];
 }
 
+// 05-ALLOWLIST D-05 extension: a caller_id (E.164) known ahead of time to belong to
+// someone in the family's life -- distinct from `members[]` (who can carry a family
+// verification passkey). An allowlist match short-circuits the whole screening flow
+// (elevenlabsPersonalization.ts) with no risk scoring or family-verify hold at all.
+export interface AllowlistEntry {
+  number: string;
+  name: string;
+  relation: string;
+}
+
 export interface HouseholdDoc {
   name: string;
   seniorName: string;
   members: HouseholdMember[];
+  allowlist?: AllowlistEntry[];
 }
 
 // The single demo household used tonight; no real senior data per CLAUDE.md.
 export const DEMO_HOUSEHOLD_ID = 'demo';
+
+// Shared by elevenlabsPersonalization.ts (deriving verification.memberId for an
+// allowlist match) and lamp.ts (resolving that same memberId back to a display name) --
+// one slug function so both sides of the round-trip agree. Deliberately distinct from a
+// real household member's `id` (e.g. 'brenden') so an allowlist entry can never collide
+// with -- and accidentally clear or overwrite -- a real member's prompts/{memberId} doc.
+export function slugifyName(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
