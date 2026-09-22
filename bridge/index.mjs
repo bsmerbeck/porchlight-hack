@@ -7,6 +7,10 @@
 // network constraint). Also polls the Pi's /joystick endpoint and turns a press into a
 // household alert via the raiseFamilyAlert callable (functions/src/alerts.ts).
 //
+// Optionally (03-HUE) also mirrors `lamp/current` onto every reachable Philips Hue bulb via
+// bridge/hue.mjs, over the same link-local LAN, no internet required. Hue is additive and
+// optional -- see bridge/hue.mjs and bridge/README.md's "Hue" section.
+//
 // Uses exactly the same public web Firebase config apps/web already uses (apiKey/authDomain/
 // projectId/appId — none of this is secret, it ships in every visitor's browser bundle) so no
 // service-account JSON or other new credential type is introduced (RESEARCH.md Don't Hand-Roll:
@@ -16,6 +20,7 @@ import { resolve } from 'node:path';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, doc, onSnapshot } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+import { loadHue, setHueState } from './hue.mjs';
 
 // The static IPv4 link-local address assigned to the Pi's ethernet interface (03-RESEARCH.md
 // Pattern 5 / Pitfall 2 — plain IPv4 sidesteps Node fetch()'s unreliable IPv6 zone-id support).
@@ -95,6 +100,11 @@ const db = getFirestore(app);
 const fns = getFunctions(app, 'us-central1');
 const raiseFamilyAlert = httpsCallable(fns, 'raiseFamilyAlert');
 
+// Optional Philips Hue integration (03-HUE) -- loadHue() logs whether it found
+// bridge/hue-local.json and no-ops setHueState() everywhere below if it didn't (or if
+// HUE_DISABLED=1 is set). No behavior changes for the Pi lamp path either way.
+loadHue();
+
 // --- State relay: lamp/current -> POST /state -------------------------------------------
 
 console.log(`[bridge] watching lamp/current -> POST ${PI_URL}/state (heartbeat every ${HEARTBEAT_MS}ms)`);
@@ -134,6 +144,7 @@ onSnapshot(
     // to wait for the next heartbeat tick (03-FIX).
     lastKnownState = data;
     await postState(data);
+    await setHueState(data.state, data.name);
   },
   (err) => {
     console.error('[bridge] onSnapshot error:', err?.message ?? err);
@@ -144,6 +155,7 @@ onSnapshot(
 setInterval(() => {
   if (lastKnownState) {
     postState(lastKnownState, { heartbeat: true });
+    setHueState(lastKnownState.state, lastKnownState.name);
   }
 }, HEARTBEAT_MS);
 
