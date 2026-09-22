@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils';
 import { StatusDot, type StatusTone } from './StatusDot';
 import { useOperatorController } from './useOperatorController';
 import { useOperatorVisible } from './useOperatorVisible';
+import { LineStatusPill, useLineStatus, type LineStatus } from './LineStatus';
 
 /** Shape of the `status/bridge` doc (D-12) plus an optional free-form message. */
 export interface OperatorStatus {
@@ -61,6 +62,8 @@ export interface OperatorBarProps {
    * to hide, so `<OperatorBar />` alone is a complete drop-in.
    */
   alwaysVisible?: boolean;
+  /** 06-K: phone-line status pill; filled from useLineStatus() when connected. */
+  lineStatus?: LineStatus;
 }
 
 const STALE_MS = 60_000;
@@ -91,6 +94,7 @@ export function OperatorBar(props: OperatorBarProps) {
   const [visible, setVisible] = useOperatorVisible();
   const show = alwaysVisible || visible;
   const live = useOperatorController(connected && show);
+  const line = useLineStatus(4000, connected && show);
   if (!show) return null;
   const pick = <K extends keyof OperatorBarProps>(k: K, fallback: OperatorBarProps[K]) =>
     props[k] !== undefined ? props[k] : connected ? fallback : undefined;
@@ -108,6 +112,7 @@ export function OperatorBar(props: OperatorBarProps) {
       onLampTest={pick('onLampTest', live.onLampTest)}
       busy={props.busy !== undefined ? props.busy : connected ? live.busy : null}
       status={status}
+      lineStatus={props.lineStatus ?? (connected ? line : undefined)}
       onClose={
         alwaysVisible && !onClose
           ? undefined
@@ -133,6 +138,7 @@ function OperatorBarView({
   soundboardOn,
   onLampTest,
   status,
+  lineStatus,
   busy = null,
   defaultCollapsed = false,
   onClose,
@@ -148,6 +154,7 @@ function OperatorBarView({
 
   const statusRow = (
     <div className="flex items-center gap-4 text-xs text-white/75">
+      {lineStatus && <LineStatusPill status={lineStatus} />}
       <StatusDot tone={piTone} size={8} label="Pi" />
       <StatusDot tone={beat.tone} size={8} label={<span className="tabular">Bridge {beat.text}</span>} />
       <StatusDot tone={hueTone} size={8} label={<span className="tabular">Hue {hue ?? '–'}</span>} />

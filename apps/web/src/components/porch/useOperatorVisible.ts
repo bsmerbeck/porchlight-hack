@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 
 export const OPERATOR_STORAGE_KEY = 'porchlight_operator';
+/** 06-K: keeps every useOperatorVisible() instance on a page in sync (bar X, /stage pill). */
+const VISIBLE_EVENT = 'porchlight:operator-visible';
+
+function broadcast(v: boolean) {
+  try {
+    window.dispatchEvent(new CustomEvent<boolean>(VISIBLE_EVENT, { detail: v }));
+  } catch {
+    /* ignore */
+  }
+}
 
 function readInitial(): boolean {
   if (typeof window === 'undefined') return false;
@@ -30,6 +40,7 @@ export function useOperatorVisible(): [boolean, (v: boolean) => void] {
 
   const setVisible = useCallback((v: boolean) => {
     setVisibleState(v);
+    broadcast(v);
     try {
       if (v) localStorage.setItem(OPERATOR_STORAGE_KEY, '1');
       else localStorage.removeItem(OPERATOR_STORAGE_KEY);
@@ -60,8 +71,13 @@ export function useOperatorVisible(): [boolean, (v: boolean) => void] {
         });
       }
     };
+    const onSync = (e: Event) => setVisibleState((e as CustomEvent<boolean>).detail);
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener(VISIBLE_EVENT, onSync);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener(VISIBLE_EVENT, onSync);
+    };
   }, []);
 
   return [visible, setVisible];
