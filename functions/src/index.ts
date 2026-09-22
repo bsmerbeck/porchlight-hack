@@ -3,10 +3,13 @@ import { onDocumentCreated } from 'firebase-functions/firestore';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { WaitlistPayload, CALL_STATES } from '@porchlight/shared';
-import { anthropicKey, twilioAccountSid, twilioAuthToken, elevenLabsKey } from './secrets.js';
+import { anthropicKey, twilioAccountSid, twilioAuthToken, elevenLabsKey, elevenLabsLlmToken } from './secrets.js';
 import { startSimulatedCall, simulateTurn } from './screening/simulateTurn.js';
 import { mirrorActiveCallToLamp } from './lamp.js';
 import { raiseFamilyAlert } from './alerts.js';
+import { elevenlabsCustomLlm } from './screening/elevenlabsCustomLlm.js';
+import { elevenlabsPersonalization } from './screening/elevenlabsPersonalization.js';
+import { forceVerdict } from './screening/endCall.js';
 
 initializeApp();
 
@@ -19,9 +22,14 @@ export { mirrorActiveCallToLamp, raiseFamilyAlert };
 // directly without a circular import through this file. Re-exported here so
 // `functions:secrets:set` + deploy binding are exercised tonight. Only
 // ANTHROPIC_API_KEY has a real value tonight; the others are placeholders until
-// Phase 2's human checkpoint.
-export { anthropicKey, twilioAccountSid, twilioAuthToken, elevenLabsKey };
+// Phase 2's human checkpoint. ELEVENLABS_LLM_TOKEN is a shared bearer secret the
+// executor generates itself (see 02-02-SUMMARY.md "Human follow-up").
+export { anthropicKey, twilioAccountSid, twilioAuthToken, elevenLabsKey, elevenLabsLlmToken };
 export { startSimulatedCall, simulateTurn };
+// 02-02 Task 1: elevenlabsCustomLlm is the agent's entire brain, wired to runTurn (02-01).
+// 02-02 Task 2: elevenlabsPersonalization creates the call doc at ring time; forceVerdict
+// is the debug/demo end-or-release path ahead of Phase 4's real verification UI.
+export { elevenlabsCustomLlm, elevenlabsPersonalization, forceVerdict };
 
 export const joinWaitlist = onCall({ region: REGION, cors: true, maxInstances: 5 }, async (req) => {
   const parsed = WaitlistPayload.safeParse(req.data);
