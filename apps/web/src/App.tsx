@@ -1,8 +1,9 @@
 import { lazy, Suspense } from 'react';
 import Landing from '@/pages/Landing';
-import AppPlaceholder from '@/pages/AppPlaceholder';
 import Stage from '@/pages/Stage';
 
+// 06-F: the family dashboard pulls in Firebase + motion; keep it out of the landing chunk.
+const AppPlaceholder = lazy(() => import('@/pages/AppPlaceholder'));
 // Lazy-loaded: this debug/demo route pulls in Firebase and never needs to land in the
 // landing page's default chunk (matches the Phase 1 lazy-Firebase pattern).
 const Sim = lazy(() => import('@/pages/Sim'));
@@ -16,7 +17,11 @@ function App() {
   const pathname = window.location.pathname.replace(/\/$/, '') || '/';
 
   if (pathname.startsWith('/app')) {
-    return <AppPlaceholder />;
+    return (
+      <Suspense fallback={null}>
+        <AppPlaceholder />
+      </Suspense>
+    );
   }
 
   if (pathname === '/stage') {
