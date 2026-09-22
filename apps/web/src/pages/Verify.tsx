@@ -22,6 +22,39 @@ void DEMO_HOUSEHOLD_ID; // documents which household this member belongs to; no 
 
 type EnrollStatus = 'idle' | 'enrolling' | 'error';
 
+// 04-FIX (phone-side guard): a defense-in-depth backstop, independent of the server-side
+// verdict-finality fix in runTurn.ts -- once THIS device has answered a given callId
+// (yes/no/timeout), never show the full-screen Yes/No modal for that same callId again,
+// even if prompts/{memberId} briefly reports state:'verifying' again for it (e.g. a stale
+// Firestore snapshot replay, or any future server-side regression of the finality fix).
+// Persisted to localStorage (not just React state) so a page reload/re-render doesn't
+// forget an already-answered call for as long as this phone stays paired.
+const ANSWERED_CALLS_STORAGE_KEY = 'porchlight_answered_calls';
+// Caps unbounded localStorage growth across a long demo session -- far more than any
+// single household will ever need to remember at once.
+const MAX_STORED_ANSWERED_CALL_IDS = 50;
+
+function loadAnsweredCallIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(ANSWERED_CALLS_STORAGE_KEY);
+    if (!raw) return new Set();
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? new Set(parsed.filter((v): v is string => typeof v === 'string')) : new Set();
+  } catch {
+    // Private browsing / corrupted value -- never block the verify flow over this.
+    return new Set();
+  }
+}
+
+function persistAnsweredCallIds(ids: Set<string>): void {
+  try {
+    localStorage.setItem(ANSWERED_CALLS_STORAGE_KEY, JSON.stringify([...ids].slice(-MAX_STORED_ANSWERED_CALL_IDS)));
+  } catch {
+    // localStorage can throw (private browsing / quota exceeded) -- the in-memory Set still
+    // guards this session even if persistence fails.
+  }
+}
+
 // Mirrors functions/src/lamp.ts's prompts/{memberId} write shape (04-01) — public-read,
 // carries a fresh VER-05 HMAC token whenever a call enters 'verifying'.
 interface PromptDoc {
@@ -112,6 +145,8 @@ export default function Verify() {
   const [alertsEnabled, setAlertsEnabled] = useState(false);
   const [result, setResult] = useState<'verified' | 'scam' | null>(null);
   const [lastMethod, setLastMethod] = useState<'passkey' | 'link' | null>(null);
+  // 04-FIX: callIds this device has already answered -- see loadAnsweredCallIds() above.
+  const [answeredCallIds, setAnsweredCallIds] = useState<Set<string>>(() => loadAnsweredCallIds());
 
   const promptRef = useRef<PromptDoc | null>(null);
   promptRef.current = prompt;
@@ -195,6 +230,10 @@ export default function Verify() {
     if (answeringRef.current) return;
     const currentPrompt = promptRef.current;
     if (!currentPrompt?.callId || !memberId) return;
+    // 04-FIX: the 20s countdown effect can fire a 'timeout' independently of the modal's
+    // render guard above -- belt-and-suspenders against double-answering (which the server
+    // would reject as "Already answered" anyway, but there's no reason to even try).
+    if (answeredCallIds.has(currentPrompt.callId)) return;
 
     answeringRef.current = true;
     setAnswering(true);
@@ -258,6 +297,16 @@ export default function Verify() {
         const { data } = await answerVerification({ callId: currentPrompt.callId, memberId, answer });
         verified = data.verified;
       }
+
+      // 04-FIX (phone-side guard): mark this callId answered on THIS device only once the
+      // server has actually recorded the verdict -- never on a thrown/failed attempt, so a
+      // genuinely failed answer can still be retried.
+      setAnsweredCallIds((prev) => {
+        const next = new Set(prev);
+        next.add(currentPrompt.callId!);
+        persistAnsweredCallIds(next);
+        return next;
+      });
 
       setResult(verified ? 'verified' : 'scam');
       setTimeout(() => setResult(null), 5000);
@@ -347,7 +396,9 @@ export default function Verify() {
     );
   }
 
-  if (prompt?.state === 'verifying' && prompt.callId) {
+  // 04-FIX: never re-show the modal for a callId this device already answered, even if the
+  // prompt doc briefly reports state:'verifying' again for it.
+  if (prompt?.state === 'verifying' && prompt.callId && !answeredCallIds.has(prompt.callId)) {
     return (
       <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-6 bg-black/95 p-6 text-center text-white">
         <p className="text-2xl">Is {prompt.claimedIdentity ?? 'someone'} calling Grandma right now?</p>
