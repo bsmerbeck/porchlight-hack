@@ -57,7 +57,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. After every caller turn the call document's `risk`, `tactics[]`, `claimed_identity`, and `recommended_action` update from Claude; the "grandchild in jail, needs gift cards, don't tell mom" script produces a climbing risk with urgency, secrecy, payment-method, authority/bail, and impersonation tactics named.
   4. A caller saying "it's Brenden" is matched to the seeded household member and the call moves to `verifying`; forcing a scam verdict ends the call with a spoken line, forcing a verified verdict lets it proceed, and after hangup the full transcript plus from/duration/outcome are persisted.
   5. The browser call simulator can play the scripted scam (typed or pre-recorded turns) through the same turn → risk → state pipeline with no telephony, producing a call document indistinguishable from a live call.
-**Plans**: TBD
+**Plans**: 3 plans
+- [ ] 02-01-PLAN.md — runTurn() screening core (Claude risk scoring, identity match, AI-initiated end) + simulateTurn + /sim browser simulator
+- [ ] 02-02-PLAN.md — elevenlabsCustomLlm + personalization webhook + Twilio-backed end/release + ElevenLabs dashboard wiring + first live test call
+- [ ] 02-03-PLAN.md — Twilio/ElevenLabs account + secrets checkpoint + full live phone test script
 
 **Target window:** Mon 10PM-2AM. Highest technical risk in the project.
 
