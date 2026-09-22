@@ -232,10 +232,17 @@ class LampHandler(BaseHTTPRequestHandler):
                 pressed = _state["joystick_pressed"]
                 _state["joystick_pressed"] = False
                 current_state = _state["target"]
-            # `state` reports whatever the joystick's local demo-mode cycling (or a
-            # bridge POST /state) last set -- new, additive field, so the bridge can
-            # mirror it if desired (Task 3). Existing `pressed` semantics unchanged.
-            self._json_response(200, {"pressed": pressed, "state": current_state})
+            # `pressed` is a one-shot flag set ONLY by a CENTER-button press
+            # (joystick_loop's KEY_ENTER branch) and cleared on every read here --
+            # direction presses (up/down/left/right) drive the local demo-mode cycle
+            # via `_cycle_joystick_state` and never touch this flag (03-FIX). The
+            # bridge must treat `pressed === true` as the sole family-alert trigger.
+            #
+            # `demoState` mirrors whatever the joystick's local demo-mode cycling (or
+            # a bridge POST /state) last set -- purely informational, additive field,
+            # so the bridge can log it if desired (Task 3 / 03-FIX). Never used to
+            # decide whether to raise an alert.
+            self._json_response(200, {"pressed": pressed, "demoState": current_state})
             return
         self.send_response(404)
         self.end_headers()

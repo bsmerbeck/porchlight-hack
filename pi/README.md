@@ -90,6 +90,19 @@ curl http://169.254.10.2:8080/joystick
 Expected visuals (eyeball the lamp — a test harness cannot see LEDs):
 `idle` = slow amber breathe, `screening`/`verifying` = faster blue breathe,
 `verified` = solid green with the name scrolling, `scam` = red/black flash,
-`ended` = reverts to idle. `/joystick` returns `{"pressed": true|false}` and
-clears the flag on every read — press the physical joystick and poll this
-endpoint to confirm `pressed` flips to `true` once.
+`ended` = reverts to idle. `/joystick` returns `{"pressed": true|false,
+"demoState": "<state>"}`. `pressed` is a one-shot flag set ONLY by the CENTER
+button and cleared on every read — press the physical center button and poll
+this endpoint to confirm `pressed` flips to `true` exactly once. `demoState`
+mirrors whichever state the local up/down/left/right demo cycle (or the
+bridge's last POST /state) last set; it is informational only and never
+drives the family alert (03-FIX).
+
+## Watchdog vs. bridge heartbeat
+
+The Pi's `watchdog_loop` reverts `lamp/current`'s render target to `idle` if
+60 seconds pass with no `POST /state` (this is the "bridge died" safety net,
+unchanged). `bridge/index.mjs` now re-POSTs the last known state every 20
+seconds (in addition to posting on every real Firestore change), so the
+watchdog only ever fires when the bridge process itself is gone — not merely
+because `lamp/current` hasn't changed in a while (03-FIX).
