@@ -341,12 +341,12 @@ describe('answerVerification', () => {
 });
 
 describe('expireVerification (06-I server-side timeout backstop)', () => {
-  it('applies the timeout verdict (same effects as the phone answering timeout) once promptedAt + 25s has passed', async () => {
+  it('applies the timeout verdict (same effects as the phone answering timeout) once promptedAt + 50s has passed', async () => {
     seedCall('call-due', {
       householdId: 'demo',
       providerCallId: 'CAdue',
       state: 'verifying',
-      verification: { memberId: 'brenden', promptedAt: Date.now() - 30_000, name: 'Brenden' },
+      verification: { memberId: 'brenden', promptedAt: Date.now() - 55_000, name: 'Brenden' },
     });
 
     const result = await expireVerification.run({ data: { callId: 'call-due' } } as never);

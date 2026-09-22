@@ -9,7 +9,7 @@ import type { CallDoc } from '@porchlight/shared';
  * its own record (still verifying, unanswered, prompted >= 25s ago), so this is safe to
  * fire from any number of screens.
  */
-export const VERIFY_BACKSTOP_MS = 25_000;
+export const VERIFY_BACKSTOP_MS = 50_000;
 const RETRY_MS = 5_000;
 const MAX_ATTEMPTS = 4;
 

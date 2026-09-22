@@ -19,7 +19,7 @@ import { cn } from '@/lib/utils';
 
 /** The protected person whose line this phone is guarding (single-household demo build). */
 export const PROTECTED_NAME = 'Margaret';
-export const VERIFY_WINDOW_SECONDS = 20;
+export const VERIFY_WINDOW_SECONDS = 45;
 
 export { memberDisplayName } from './memberName';
 

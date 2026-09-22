@@ -99,7 +99,11 @@ async function applyNoOrTimeoutVerdict(
   // finality" fix above). Log loudly so a missing providerCallId on a call that SHOULD
   // have one (a real phone call) is never silently swallowed.
   if (callData.providerCallId) {
-    await forceEndCall(callData.providerCallId, "I'm sorry, but this call has been identified as a scam and is being ended now.");
+    try {
+      await forceEndCall(callData.providerCallId, "I'm sorry, but this call has been identified as a scam and is being ended now.");
+    } catch (err) {
+      console.error('answerVerification: Twilio hang-up failed (verdict already written)', { callId, err, ...log });
+    }
   } else {
     console.warn(
       "answerVerification: no providerCallId on call doc -- cannot directly hang up the Twilio call leg; relying on runTurn()/elevenlabsCustomLlm.ts's end_call fallback on the next caller turn",
@@ -204,7 +208,7 @@ export const answerVerification = onCall(
 );
 
 /** 06-I: the phone's own countdown is 20s; the server backstop waits a little longer. */
-export const VERIFY_EXPIRE_MS = 25_000;
+export const VERIFY_EXPIRE_MS = 50_000;
 
 const ExpireVerificationInput = z.object({ callId: z.string().min(1) });
 
