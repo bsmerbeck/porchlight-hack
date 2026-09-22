@@ -125,14 +125,14 @@ in the lamp housing.
    little-endian `int16`s.
 3. If **neither path** finds the chip, `orientation_loop` logs a warning to
    stderr and exits — `auto_rotate` stays `true` in `/health` but `rotation`
-   just never changes from whatever it was last set to (default `0`, or
-   whatever `PORCHLIGHT_ROTATION` pinned it to).
+   just never changes from whatever it was last set to (`DEFAULT_ROTATION`,
+   or whatever `PORCHLIGHT_ROTATION` pinned it to).
 
-**Which path is actually live on this Pi is not yet confirmed** — this was
-implemented and unit-tested without physical access to the device this
-session (the Pi was unreachable over the ethernet cable at implementation
-time; see `03-IMU-SUMMARY.md`). Run this once the Pi is connected to find
-out:
+**Confirmed live on the real Pi (03-IMU-FIX, 2026-09-22):** the raw I2C
+fallback is the path in use — `/sys/bus/iio/devices/` doesn't exist on this
+Pi (the `rpi-sense` overlay doesn't expose the IMU via IIO, as expected), and
+`journalctl -u porchlight-lamp.service` logs `accelerometer via raw I2C at
+0x6a` on every start. To re-check after any future kernel/overlay change:
 ```bash
 ssh pi@169.254.10.2 'ls /sys/bus/iio/devices/ 2>&1; cat /sys/bus/iio/devices/iio:device*/name 2>&1'
 ```
