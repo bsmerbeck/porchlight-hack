@@ -11,3 +11,5 @@ functions/.secret.local
 functions/lib/
 *.tsbuildinfo
 *-debug.log
+.claude/worktrees/
+.gsd/
