@@ -25,6 +25,7 @@ function fallbackTurn(previousRisk: { score: number; tactics: Tactic[] } | undef
     risk: previousRisk?.score ?? 0,
     tactics: previousRisk?.tactics ?? [],
     claimedIdentity: null,
+    message: null,
   };
 }
 
@@ -130,28 +131,14 @@ export async function runTurn(opts: RunTurnOptions): Promise<RunTurnResult> {
   if (lastCallerTurn && lastCallerTurn.text === opts.callerText && Date.now() - lastCallerTurn.at < IDEMPOTENT_RETRY_WINDOW_MS) {
     const lastAssistantTurn = [...history].reverse().find((t) => t.role === 'assistant');
     const priorAction = (callData?.risk as { recommendedAction?: string } | undefined)?.recommendedAction;
+    // A resend after the call has already been finalized (AI-ended scam, or a
+    // 05-ALLOWLIST 'message' outcome) must still report endCall:true, not just an
+    // AI-recommended 'end' action from this exact turn's risk snapshot.
+    const alreadyEnded = callData?.state === 'ended';
     return {
       reply: lastAssistantTurn?.text ?? fallbackTurn(callData?.risk).reply,
-      endCall: priorAction === 'end',
+      endCall: priorAction === 'end' || alreadyEnded,
     };
-  }
-
-  // 02-FIX2 (live-call bug): once state:verifying is reached, never re-invoke Claude on
-  // further caller chatter -- the call is on hold pending a real family member's
-  // tap-to-confirm/deny in the app, and there is nothing left for the model to decide.
-  // Re-running Claude here is exactly what let the model freelance a wrong line ("let me
-  // get her on the phone... hold on just a moment for Margaret") on the live call this
-  // fixes. Just append the transcript turn and hold with the same canned reply.
-  if (callData?.state === 'verifying') {
-    const at1 = Date.now();
-    const at2 = at1 + 1;
-    await callRef.update({
-      turns: FieldValue.arrayUnion(
-        { role: 'caller', text: opts.callerText, at: at1 } satisfies CallTurn,
-        { role: 'assistant', text: STILL_CHECKING_REPLY, at: at2 } satisfies CallTurn,
-      ),
-    });
-    return { reply: STILL_CHECKING_REPLY, endCall: false };
   }
 
   const messages = [
@@ -162,25 +149,65 @@ export async function runTurn(opts: RunTurnOptions): Promise<RunTurnResult> {
     { role: 'user' as const, content: opts.callerText },
   ];
 
-  let turn: RiskTurn;
-  try {
-    const response = await getClient().messages.parse({
-      model: 'claude-haiku-4-5',
-      max_tokens: 512,
-      system: SYSTEM_PROMPT,
-      messages,
-      output_config: { format: zodOutputFormat(RiskTurn) },
-    });
-    if (!response.parsed_output) {
-      console.error('runTurn: parsed_output was null, falling back to a generic reply', { callId: opts.callId });
-      turn = fallbackTurn(callData?.risk);
-    } else {
-      turn = response.parsed_output;
+  async function callClaude(): Promise<RiskTurn> {
+    try {
+      const response = await getClient().messages.parse({
+        model: 'claude-haiku-4-5',
+        max_tokens: 512,
+        system: SYSTEM_PROMPT,
+        messages,
+        output_config: { format: zodOutputFormat(RiskTurn) },
+      });
+      if (!response.parsed_output) {
+        console.error('runTurn: parsed_output was null, falling back to a generic reply', { callId: opts.callId });
+        return fallbackTurn(callData?.risk);
+      }
+      return response.parsed_output;
+    } catch (err) {
+      console.error('runTurn: Claude call failed, falling back to a generic reply', err);
+      return fallbackTurn(callData?.risk);
     }
-  } catch (err) {
-    console.error('runTurn: Claude call failed, falling back to a generic reply', err);
-    turn = fallbackTurn(callData?.risk);
   }
+
+  // 05-ALLOWLIST Task 4: once state:verifying is reached, Claude is called again on every
+  // further caller turn -- SOLELY to keep risk.score/risk.tactics live for the
+  // dashboard/stage view while the call is on hold -- but its `reply` is NEVER spoken and
+  // it can NEVER change state away from 'verifying'. 02-FIX2's original bug was Claude
+  // freelancing a wrong SPOKEN line ("let me get her on the phone... hold on just a
+  // moment for Margaret") while on hold; fixed here by construction, not by removing
+  // Claude from the loop -- the caller always hears the same fixed STILL_CHECKING_REPLY
+  // line regardless of what Claude returns. State only ever leaves 'verifying' via
+  // answerVerification (the family's real yes/no verdict) or a timeout -- the /verify
+  // page's own 20s countdown auto-answers 'timeout' on expiry (see verifyCountdown.ts /
+  // Verify.tsx), which answerVerification treats the same as a 'no' (state:'scam'); there
+  // is no separate server-side timeout in runTurn itself.
+  if (callData?.state === 'verifying') {
+    const turn = await callClaude();
+    const at1 = Date.now();
+    const at2 = at1 + 1;
+    const priorClaimedIdentity = (callData?.risk as { claimedIdentity?: string } | undefined)?.claimedIdentity;
+    const risk: Record<string, unknown> = {
+      score: turn.risk,
+      tactics: turn.tactics,
+      // Locked at 'verify' regardless of what Claude recommends this turn -- state
+      // changes only through answerVerification, never through this refresh.
+      recommendedAction: 'verify',
+      updatedAt: FieldValue.serverTimestamp(),
+    };
+    if (priorClaimedIdentity) {
+      risk.claimedIdentity = priorClaimedIdentity;
+    }
+    await callRef.update({
+      turns: FieldValue.arrayUnion(
+        { role: 'caller', text: opts.callerText, at: at1 } satisfies CallTurn,
+        { role: 'assistant', text: STILL_CHECKING_REPLY, at: at2 } satisfies CallTurn,
+      ),
+      risk,
+    });
+    return { reply: STILL_CHECKING_REPLY, endCall: false };
+  }
+
+  const turn = await callClaude();
 
   // 02-FIX: carry a claimed identity forward across turns. Claude's structured output
   // only reports claimedIdentity on the turn it's actually stated (or wherever it
@@ -252,6 +279,12 @@ export async function runTurn(opts: RunTurnOptions): Promise<RunTurnResult> {
     risk,
   };
 
+  // 05-ALLOWLIST Task 3: only finalize (end the call, store the message) once Claude has
+  // actually produced confirmed message content this turn -- until then, 'message' stays
+  // an in-progress recommendation (like 'continue') while the screener keeps gathering
+  // the message text and callback number.
+  const messageFinalized = effectiveAction === 'message' && Boolean(turn.message);
+
   if (effectiveAction === 'verify' && memberId) {
     update.state = 'verifying';
     update.verification = { memberId, promptedAt: Date.now() };
@@ -261,9 +294,21 @@ export async function runTurn(opts: RunTurnOptions): Promise<RunTurnResult> {
     update.state = 'scam';
     update.outcome = 'scam';
     update.endedAt = Date.now();
+  } else if (messageFinalized && turn.message) {
+    update.state = 'ended';
+    update.outcome = 'message';
+    update.endedAt = Date.now();
+    // Admin SDK throws on an explicit `undefined` (see the claimedIdentity comment
+    // above) -- omit `callback` entirely rather than writing it as undefined/null when
+    // the caller had none.
+    const messageDoc: Record<string, unknown> = { text: turn.message.text };
+    if (turn.message.callback) {
+      messageDoc.callback = turn.message.callback;
+    }
+    update.message = messageDoc;
   }
 
   await callRef.update(update);
 
-  return { reply: effectiveReply, endCall: effectiveAction === 'end' };
+  return { reply: effectiveReply, endCall: effectiveAction === 'end' || messageFinalized };
 }
