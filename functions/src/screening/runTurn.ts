@@ -122,19 +122,30 @@ export async function runTurn(opts: RunTurnOptions): Promise<RunTurnResult> {
   const at1 = Date.now();
   const at2 = at1 + 1;
 
+  // The real (non-mocked) Firestore Admin SDK throws "Cannot use 'undefined' as a
+  // Firestore value" on ANY explicit undefined, nested or not (no
+  // ignoreUndefinedProperties setting is configured for this project) -- confirmed live
+  // via 02-02's post-deploy curl verification, where every turn with a null
+  // claimedIdentity (the common case, before a caller states who they are) threw on
+  // this exact field and silently fell back to the generic reply. Omit the key
+  // entirely instead of writing `claimedIdentity: undefined`.
+  const risk: Record<string, unknown> = {
+    score: turn.risk,
+    tactics: turn.tactics,
+    recommendedAction: turn.recommendedAction,
+    // OK here — risk is a top-level map field being update()d directly, not an array element.
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+  if (turn.claimedIdentity) {
+    risk.claimedIdentity = turn.claimedIdentity;
+  }
+
   const update: Record<string, unknown> = {
     turns: FieldValue.arrayUnion(
       { role: 'caller', text: opts.callerText, at: at1 } satisfies CallTurn,
       { role: 'assistant', text: turn.reply, at: at2 } satisfies CallTurn,
     ),
-    risk: {
-      score: turn.risk,
-      tactics: turn.tactics,
-      claimedIdentity: turn.claimedIdentity ?? undefined,
-      recommendedAction: turn.recommendedAction,
-      // OK here — risk is a top-level map field being update()d directly, not an array element.
-      updatedAt: FieldValue.serverTimestamp(),
-    },
+    risk,
   };
 
   if (turn.recommendedAction === 'verify' && memberId) {

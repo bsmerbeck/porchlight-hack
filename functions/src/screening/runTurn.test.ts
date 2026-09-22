@@ -210,4 +210,39 @@ describe('runTurn', () => {
     const lastUpdate = fakeDb.__updateCalls.at(-1)!;
     expect((lastUpdate.data.risk as { recommendedAction: string }).recommendedAction).toBe('continue');
   });
+
+  // Regression test for a bug found live in 02-02's post-deploy curl verification: the
+  // fake Firestore mock used throughout this file happily accepts an explicit
+  // `undefined` value, but the REAL (non-mocked) Firestore Admin SDK throws
+  // "Cannot use 'undefined' as a Firestore value" on any such field -- which was
+  // silently breaking every turn with a null claimedIdentity (the common case, before
+  // a caller states who they are) in production. Deep-scan the actual update() payload
+  // for `undefined` so this class of bug can never regress unnoticed again.
+  function assertNoUndefinedValues(value: unknown, path = 'update'): void {
+    if (value === undefined) {
+      throw new Error(`Firestore update payload contains an explicit undefined at ${path} (Admin SDK would throw on this in production)`);
+    }
+    if (value === null || typeof value !== 'object') return;
+    // FieldValue sentinels (arrayUnion/serverTimestamp mocks) aren't plain data -- skip
+    // their internals, since __arrayUnion legitimately holds real CallTurn objects only.
+    if ('__arrayUnion' in (value as object)) {
+      for (const item of (value as { __arrayUnion: unknown[] }).__arrayUnion) {
+        assertNoUndefinedValues(item, `${path}.__arrayUnion[]`);
+      }
+      return;
+    }
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      assertNoUndefinedValues(nested, `${path}.${key}`);
+    }
+  }
+
+  it('never writes an explicit undefined value anywhere in the update() payload when claimedIdentity is null', async () => {
+    mockClaudeTurn({ reply: 'Who is calling, please?', risk: 15, recommendedAction: 'continue', claimedIdentity: null });
+
+    await runTurn({ callId: 'call-no-identity', householdId: DEMO_HOUSEHOLD_ID, callerText: 'hello?' });
+
+    const lastUpdate = fakeDb.__updateCalls.at(-1)!;
+    expect(() => assertNoUndefinedValues(lastUpdate.data)).not.toThrow();
+    expect(lastUpdate.data.risk).not.toHaveProperty('claimedIdentity');
+  });
 });
