@@ -24,18 +24,25 @@ type PersonalizationRequestBody = {
 export const elevenlabsPersonalization = onRequest({ region: REGION }, async (req, res) => {
   const { caller_id, call_sid } = (req.body ?? {}) as PersonalizationRequestBody;
 
-  const ref = await getFirestore()
-    .collection('calls')
-    .add({
-      householdId: DEMO_HOUSEHOLD_ID,
-      state: 'screening',
-      from: caller_id ?? 'unknown',
-      provider: 'elevenlabs' as const,
-      providerCallId: call_sid,
-      turns: [],
-      risk: { score: 0, tactics: [], recommendedAction: 'continue' as const, updatedAt: Date.now() },
-      startedAt: Date.now(),
-    });
+  const doc: Record<string, unknown> = {
+    householdId: DEMO_HOUSEHOLD_ID,
+    state: 'screening',
+    from: caller_id ?? 'unknown',
+    provider: 'elevenlabs' as const,
+    turns: [],
+    risk: { score: 0, tactics: [], recommendedAction: 'continue' as const, updatedAt: Date.now() },
+    startedAt: Date.now(),
+  };
+  // Firestore's Admin SDK throws on an explicit `undefined` value (no
+  // ignoreUndefinedProperties setting is configured) -- omit the key entirely rather
+  // than writing providerCallId: undefined. `call_sid` is also documented as an empty
+  // string on non-Twilio channels (WhatsApp/SMS), so guard on truthiness, not just
+  // presence.
+  if (call_sid) {
+    doc.providerCallId = call_sid;
+  }
+
+  const ref = await getFirestore().collection('calls').add(doc);
 
   res.json({ dynamic_variables: { call_doc_id: ref.id } });
 });
