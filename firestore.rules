@@ -26,6 +26,15 @@ service cloud.firestore {
       allow list: if true;
       allow write: if false;
     }
+    // Phase 6 (06-H): public read of the demo household's family alerts (joystick /
+    // raiseFamilyAlert) so the /app W7 alert card renders for anonymous web clients.
+    // Scoped to the single `demo` household like the rest of the public mirror docs.
+    // Only the Admin SDK writes (raiseFamilyAlert / resetDemo); no client write, ever.
+    match /households/demo/alerts/{alertId} {
+      allow get: if true;
+      allow list: if true;
+      allow write: if false;
+    }
     // Phase 6 (D-12): the Mac bridge's heartbeat doc, read by the web OperatorBar.
     // The bridge runs with the public web config and NO auth, so the write is open to anyone
     // but locked to exactly this shape -- demo-grade risk accepted: the worst case is a spoofed
