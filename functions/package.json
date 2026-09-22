@@ -1,0 +1,23 @@
+{
+  "name": "@porchlight/functions",
+  "version": "0.0.1",
+  "private": true,
+  "main": "lib/index.js",
+  "engines": {
+    "node": "22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && esbuild src/index.ts --bundle --platform=node --target=node22 --format=cjs --packages=external --alias:@porchlight/shared=../packages/shared/src/index.ts --outfile=lib/index.js",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "firebase-admin": "14.4.0",
+    "firebase-functions": "7.4.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.2",
+    "esbuild": "0.28.2",
+    "typescript": "6.0.3"
+  }
+}

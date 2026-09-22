@@ -1,0 +1,21 @@
+{
+  "name": "porchlight",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "dev": "concurrently -n web,fb -c cyan,yellow \"pnpm --filter @porchlight/web dev\" \"firebase emulators:start --only functions,firestore,hosting\"",
+    "dev:web": "pnpm --filter @porchlight/web dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "deploy": "pnpm -r build && firebase deploy --only hosting,functions,firestore:rules",
+    "deploy:web": "pnpm --filter @porchlight/web build && firebase deploy --only hosting"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3",
+    "concurrently": "10.0.5"
+  }
+}

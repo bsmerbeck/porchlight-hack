@@ -7,3 +7,7 @@ dist/
 *.log
 .DS_Store
 __pycache__/
+functions/.secret.local
+functions/lib/
+*.tsbuildinfo
+*-debug.log

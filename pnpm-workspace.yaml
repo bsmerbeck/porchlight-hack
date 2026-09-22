@@ -1,0 +1,10 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+  - 'functions'
+overrides:
+  zod: 4.4.3
+allowBuilds:
+  '@firebase/util': true
+  esbuild: true
+  protobufjs: true
