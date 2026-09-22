@@ -6,6 +6,9 @@ import Stage from '@/pages/Stage';
 // Lazy-loaded: this debug/demo route pulls in Firebase and never needs to land in the
 // landing page's default chunk (matches the Phase 1 lazy-Firebase pattern).
 const Sim = lazy(() => import('@/pages/Sim'));
+// Lazy-loaded: the member phone app pulls in Firebase + @simplewebauthn/browser, neither of
+// which should land in the landing page's default chunk.
+const Verify = lazy(() => import('@/pages/Verify'));
 
 function App() {
   const pathname = window.location.pathname.replace(/\/$/, '') || '/';
@@ -22,6 +25,14 @@ function App() {
     return (
       <Suspense fallback={null}>
         <Sim />
+      </Suspense>
+    );
+  }
+
+  if (pathname === '/verify') {
+    return (
+      <Suspense fallback={null}>
+        <Verify />
       </Suspense>
     );
   }

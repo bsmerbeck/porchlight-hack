@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@porchlight/shared": "workspace:*",
+    "@simplewebauthn/browser": "14.0.0",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.3.0",
     "firebase": "12.15.0",
