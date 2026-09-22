@@ -47,8 +47,7 @@ const TAKEOVER_BANNER: Partial<Record<CallState, { text: string; bg: string }>> 
 
 const TAKEOVER_DURATION_MS = 5000;
 
-// Amber — the Porchlight brand color (matches --primary / Lamp.tsx GLOW_COLOR.amber) —
-// used for the persistent state banner regardless of which state is showing.
+// Amber — the Porchlight brand color (matches --primary / Lamp.tsx GLOW_COLOR.amber).
 const AMBER_BG = 'oklch(0.85 0.17 75)';
 const AMBER_FG = 'oklch(0.2 0.03 60)';
 
@@ -56,6 +55,34 @@ function riskColor(score: number): string {
   if (score >= 70) return 'oklch(0.65 0.22 25)'; // red
   if (score >= 40) return AMBER_BG; // amber
   return 'oklch(0.75 0.19 145)'; // green
+}
+
+// 04-POLISH: the persistent state banner used to render in a fixed amber regardless of
+// state, contradicting the "known-caller call stays state:'verified' (keeping that banner
+// green, per the phase spec)" comment above -- it now actually tracks the call's verdict:
+// green for verified/known, red for scam, blue for a taken message, and a pulsing amber
+// while actively verifying. Idle/screening/ended fall back to the neutral amber brand color.
+const BANNER_PALETTE = {
+  amber: { bg: AMBER_BG, fg: AMBER_FG },
+  green: { bg: 'oklch(0.75 0.19 145)', fg: AMBER_FG }, // Lamp.tsx GLOW_COLOR.green
+  red: { bg: 'oklch(0.65 0.22 25)', fg: 'oklch(0.98 0 0)' }, // Lamp.tsx GLOW_COLOR.red
+  blue: { bg: 'oklch(0.7 0.15 250)', fg: 'oklch(0.98 0 0)' },
+} as const;
+
+function bannerStyle(call: FeedCall): { bg: string; fg: string; pulse: boolean } {
+  if (call.outcome === 'known') return { ...BANNER_PALETTE.green, pulse: false };
+  if (call.outcome === 'message') return { ...BANNER_PALETTE.blue, pulse: false };
+
+  switch (call.state) {
+    case 'verified':
+      return { ...BANNER_PALETTE.green, pulse: false };
+    case 'scam':
+      return { ...BANNER_PALETTE.red, pulse: false };
+    case 'verifying':
+      return { ...BANNER_PALETTE.amber, pulse: true };
+    default:
+      return { ...BANNER_PALETTE.amber, pulse: false };
+  }
 }
 
 /** Short WebAudio beep, gated behind a user click (autoplay policies) -- optional cue. */
@@ -180,13 +207,18 @@ export default function Stage() {
 
           {call && (
             <>
-              {/* State banner: >=72px, always the Porchlight amber palette regardless of state */}
-              <div
-                className="rounded-2xl px-6 py-6 text-center text-[72px] leading-none font-black md:text-[96px]"
-                style={{ backgroundColor: AMBER_BG, color: AMBER_FG }}
-              >
-                {stateLabel(call)}
-              </div>
+              {/* State banner: >=72px, colored per bannerStyle (green/red/blue/pulsing amber) */}
+              {(() => {
+                const { bg, fg, pulse } = bannerStyle(call);
+                return (
+                  <div
+                    className={`rounded-2xl px-6 py-6 text-center text-[72px] leading-none font-black md:text-[96px]${pulse ? ' animate-pulse' : ''}`}
+                    style={{ backgroundColor: bg, color: fg }}
+                  >
+                    {stateLabel(call)}
+                  </div>
+                );
+              })()}
 
               {call.outcome === 'known' && call.verification?.name ? (
                 <p className="text-center text-3xl">
