@@ -213,7 +213,10 @@ export default function Stage() {
       </header>
 
       <main className="relative min-h-0 flex-1 px-12 pb-12">
-        <AnimatePresence mode="wait" initial={false}>
+        {/* 06-I: popLayout (not "wait") so the body swaps on the SAME render as the header's
+            "Live call" dot -- both read one deriveStageState result; the outgoing screen fades
+            out absolutely-positioned underneath instead of delaying the incoming one. */}
+        <AnimatePresence mode="popLayout" initial={false}>
           {view.mode === 'ready' || !call ? (
             <motion.div key="ready" {...fade} className="flex h-full items-center justify-center">
               <ReadyState
