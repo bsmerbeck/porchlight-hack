@@ -1,11 +1,153 @@
-# Porchlight Lamp Bridge (placeholder)
+# Porchlight Lamp Bridge
 
-A small Node script that will run on the Mac, watch `calls/{id}` documents in
-Firestore, and push the resulting lamp state to the Pi over the direct
-ethernet link.
+The Mac-side relay for the Porchlight lamp (Phase 3). Watches `lamp/current` in Firestore
+(mirrored from `calls/{id}` by `functions/src/lamp.ts`'s `mirrorActiveCallToLamp`) and POSTs the
+resulting state to the Pi's `pi/lamp.py` HTTP service over the direct ethernet cable — **never
+over Wi-Fi** (CLAUDE.md network constraint). It also polls the Pi's `/joystick` endpoint every
+~500ms and turns a press into a `households/{id}/alerts` record via the `raiseFamilyAlert`
+callable (`functions/src/alerts.ts`).
 
-- Imports call state types (`CallState`, `CallDoc`) from `@porchlight/shared`
-  so the bridge and the rest of the app agree on the state machine.
-- Talks to the Pi via HTTP POST over the link-local ethernet cable — no
-  dependency on venue Wi-Fi.
-- Filled in during Phase 3.
+## Running it
+
+```bash
+pnpm run lamp:bridge
+```
+
+Run this from the repo root (pnpm scripts always run from there, so `bridge/index.mjs`'s
+relative config-file lookups resolve correctly). Leave it running for the whole demo — it's a
+long-lived process, not a one-shot script.
+
+Override the Pi's address (default `http://169.254.10.2:8080`) with `PI_URL`:
+
+```bash
+PI_URL=http://169.254.10.2:8080 pnpm run lamp:bridge
+```
+
+## Where its Firebase config comes from
+
+The bridge uses **exactly the same public web Firebase config** `apps/web` already uses
+(`apiKey`/`authDomain`/`projectId`/`appId` — none of this is secret; it ships in every visitor's
+browser bundle). No service-account JSON, no new credential type.
+
+It looks for config in this order:
+
+1. `apps/web/.env.local` (the real file `apps/web` itself reads — gitignored, same as every
+   other `.env.local` in this repo).
+2. `bridge/.env.local` (also gitignored) as a fallback, for a checkout that doesn't already have
+   `apps/web/.env.local` populated.
+
+If neither exists, generate the fallback once:
+
+```bash
+pnpm run lamp:bridge:config
+```
+
+This runs `firebase apps:sdkconfig WEB --project porchlight-hack` (a CLI call to Firebase's own
+servers, not a file read) and writes `bridge/.env.local` directly — no secret value is ever
+printed to the console or committed (`.gitignore`'s `.env.*` pattern covers it).
+
+## `DEMO_HOUSEHOLD_ID`
+
+`bridge/index.mjs` declares a top-level constant:
+
+```js
+const DEMO_HOUSEHOLD_ID = 'demo';
+```
+
+This is the only household this hackathon build ever seeds
+(`packages/shared/src/households.ts`'s `DEMO_HOUSEHOLD_ID`). Change this constant if a future
+phase seeds a different household for a live (non-demo) run — the joystick poll loop passes it
+directly to the `raiseFamilyAlert` callable.
+
+## Manual verification runbook (no telephony required)
+
+This exercises the full path — Function mirror → bridge `onSnapshot` → HTTP POST → Pi render —
+with no telephony and no dependency on Phase 2 being finished.
+
+**Note:** the Firebase CLI installed for this project (15.22.4) does **not** have a
+`firestore:set` command (it was removed/renamed upstream from the version 03-RESEARCH.md's code
+examples assumed). Use one of these two methods instead:
+
+### Method A — Firebase Console (no setup)
+
+Open the [Firestore console for `porchlight-hack`](https://console.firebase.google.com/project/porchlight-hack/firestore/data)
+and create/edit `calls/demo` by hand for each state below.
+
+### Method B — a short Admin SDK script (scriptable, repeatable)
+
+Requires `gcloud auth application-default login` once (or `GOOGLE_APPLICATION_CREDENTIALS` set
+to a service-account key). Run from `functions/` so Node resolves the already-installed
+`firebase-admin` dependency:
+
+```bash
+cd functions
+node -e '
+import("firebase-admin/app").then(async ({ initializeApp, applicationDefault }) => {
+  const { getFirestore } = await import("firebase-admin/firestore");
+  initializeApp({ credential: applicationDefault(), projectId: "porchlight-hack" });
+  const db = getFirestore();
+  await db.doc("calls/demo").set({
+    householdId: "demo",
+    state: "scam",                 // change per step below
+    from: "+15550001234",
+    startedAt: Date.now(),
+    provider: "simulator",
+    turns: [],
+    risk: { score: 90, tactics: ["urgency"], claimedIdentity: "Brenden", recommendedAction: "end", updatedAt: Date.now() },
+  }, { merge: true });
+  console.log("wrote calls/demo");
+  process.exit(0);
+});
+'
+```
+
+Walk through every state, watching the Pi (or `curl http://169.254.10.2:8080/health` /
+`GET /health` on the Pi) after each write:
+
+| Step | `state` | Extra fields | Expected Pi render |
+|---|---|---|---|
+| 1 | `screening` | `risk.claimedIdentity: "Brenden"` | Blue breathing pulse |
+| 2 | `verifying` | (same) | Blue breathing pulse (faster feel, same color) |
+| 3 | `verified` | `verification: { memberId: "brenden", answer: "yes" }` — requires a seeded `households/demo` doc with a member whose `id` is `"brenden"` | Green + scrolling first name ("BRENDEN") |
+| 4 | `scam` | `risk.claimedIdentity: "Brenden"` | Red/black flash |
+| 5 | `ended` | — | Reverts to idle (amber breathe) within ~1s |
+
+Seed a demo household once, if `households/demo` doesn't exist yet:
+
+```bash
+cd functions
+node -e '
+import("firebase-admin/app").then(async ({ initializeApp, applicationDefault }) => {
+  const { getFirestore } = await import("firebase-admin/firestore");
+  initializeApp({ credential: applicationDefault(), projectId: "porchlight-hack" });
+  await getFirestore().doc("households/demo").set({
+    name: "Demo Household",
+    seniorName: "Grandma Rose",
+    members: [{ id: "brenden", name: "Brenden", relation: "grandson", aliases: [], passkeyCredentialIds: [] }],
+  });
+  console.log("seeded households/demo");
+  process.exit(0);
+});
+'
+```
+
+### Pre-deploy fallback (if `mirrorActiveCallToLamp` isn't deployed yet)
+
+Skip the `calls/demo` write and set `lamp/current` directly with the same Admin SDK pattern above
+(swap `calls/demo` for `lamp/current` and drop the `calls`-only fields) — the bridge and Pi side
+are fully exercised either way, since the bridge only ever watches `lamp/current`.
+
+### Joystick / alert check
+
+The Pi's `/joystick` endpoint can't be triggered without physically pressing the Sense HAT
+joystick. To exercise the `raiseFamilyAlert` callable path without hardware:
+
+```bash
+curl -X POST "https://us-central1-porchlight-hack.cloudfunctions.net/raiseFamilyAlert" \
+  -H 'content-type: application/json' \
+  -d '{"data":{"householdId":"demo"}}'
+# -> {"result":{"id":"..."}}; check households/demo/alerts/{id} in the console
+```
+
+An actual physical joystick press producing a visible dashboard alert is a Phase 4 follow-up (the
+dashboard doesn't exist yet).
