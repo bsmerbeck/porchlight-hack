@@ -1,7 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { DEMO_HOUSEHOLD_ID } from '@porchlight/shared';
-import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
 import {
   getPairedMemberId,
   isPasskeyEnrolled,
@@ -11,6 +9,7 @@ import {
 } from '@/lib/memberSession';
 import { computeSecondsLeft, hasExpired } from '@/lib/verifyCountdown';
 import * as webauthn from '@/lib/webauthn';
+import { ArmedScreen, EnrollScreen, PromptScreen, ResultScreen, memberDisplayName } from './verify/VerifyScreens';
 
 // Default demo member this hackathon build's enroll screen targets when no `?member=` query
 // param pre-selects a different one (04-POLISH) — change this to pair a different household
@@ -21,6 +20,9 @@ const DEMO_MEMBER_ID = 'brenden';
 void DEMO_HOUSEHOLD_ID; // documents which household this member belongs to; no client read needed
 
 type EnrollStatus = 'idle' | 'enrolling' | 'error';
+
+// D-08: how long the post-answer result card holds before returning to armed idle.
+const RESULT_CARD_MS = 6000;
 
 // 04-FIX (phone-side guard): a defense-in-depth backstop, independent of the server-side
 // verdict-finality fix in runTurn.ts -- once THIS device has answered a given callId
@@ -61,6 +63,8 @@ interface PromptDoc {
   callId?: string;
   state: 'none' | 'verifying';
   claimedIdentity?: string | null;
+  // Not written by lamp.ts today; rendered as CallerCard's "Says: ..." if a future writer adds it.
+  claimedText?: string | null;
   promptedAt?: number;
   token?: string;
 }
@@ -145,6 +149,13 @@ export default function Verify() {
   const [alertsEnabled, setAlertsEnabled] = useState(false);
   const [result, setResult] = useState<'verified' | 'scam' | null>(null);
   const [lastMethod, setLastMethod] = useState<'passkey' | 'link' | null>(null);
+  // 06-E: which answer produced the current result card + who was confirmed (for copy).
+  const [lastAnswer, setLastAnswer] = useState<'yes' | 'no' | 'timeout' | null>(null);
+  const [resultName, setResultName] = useState<string | undefined>(undefined);
+  const [answeringChoice, setAnsweringChoice] = useState<'yes' | 'no' | 'timeout' | null>(null);
+  // 06-E: true once the first prompts/{memberId} snapshot lands (drives the "Armed" dot).
+  const [connected, setConnected] = useState(false);
+  const resultTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 04-FIX: callIds this device has already answered -- see loadAnsweredCallIds() above.
   const [answeredCallIds, setAnsweredCallIds] = useState<Set<string>>(() => loadAnsweredCallIds());
 
@@ -178,6 +189,7 @@ export default function Verify() {
       ]);
       if (cancelled) return;
       unsubscribe = onSnapshot(doc(db, 'prompts', memberId), (snap) => {
+        setConnected(true);
         setPrompt((snap.data() as PromptDoc | undefined) ?? null);
       });
     })();
@@ -187,6 +199,11 @@ export default function Verify() {
       unsubscribe?.();
     };
   }, [memberId]);
+
+  // Clear a pending result-card timer on unmount.
+  useEffect(() => () => {
+    if (resultTimerRef.current) clearTimeout(resultTimerRef.current);
+  }, []);
 
   // 20s visible countdown, driven by the pure verifyCountdown helpers.
   useEffect(() => {
@@ -237,6 +254,7 @@ export default function Verify() {
 
     answeringRef.current = true;
     setAnswering(true);
+    setAnsweringChoice(answer);
     setAnswerError(null);
 
     try {
@@ -308,14 +326,19 @@ export default function Verify() {
         return next;
       });
 
+      // D-08: result card for 6s, then back to armed idle.
+      setLastAnswer(answer);
+      setResultName(currentPrompt.claimedIdentity ?? undefined);
       setResult(verified ? 'verified' : 'scam');
-      setTimeout(() => setResult(null), 5000);
+      if (resultTimerRef.current) clearTimeout(resultTimerRef.current);
+      resultTimerRef.current = setTimeout(() => setResult(null), RESULT_CARD_MS);
     } catch (err) {
       console.error('Verify: answerVerification failed', err);
       setAnswerError('Something went wrong confirming — try again.');
     } finally {
       answeringRef.current = false;
       setAnswering(false);
+      setAnsweringChoice(null);
     }
   }
 
@@ -358,41 +381,18 @@ export default function Verify() {
 
   if (!memberId) {
     return (
-      <div className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center gap-6 p-6 text-center">
-        <div>
-          <h1 className="text-2xl font-bold">Porchlight family verify</h1>
-          <p className="text-muted-foreground">
-            Enroll this phone with a passkey so it can confirm "yes, that's really me" during a
-            call.
-          </p>
-        </div>
-        <Button
-          onClick={() => void handleEnroll()}
-          disabled={enrollStatus === 'enrolling'}
-          size="lg"
-          className="w-fit"
-        >
-          {enrollStatus === 'enrolling' ? 'Enrolling…' : 'Enroll this phone'}
-        </Button>
-        {enrollError && <p className="text-sm text-destructive">{enrollError}</p>}
-      </div>
+      <EnrollScreen
+        targetName={memberDisplayName(enrollTargetId)}
+        enrolling={enrollStatus === 'enrolling'}
+        error={enrollError}
+        onEnroll={() => void handleEnroll()}
+      />
     );
   }
 
   if (result) {
-    const isVerified = result === 'verified';
     return (
-      <div
-        className={cn(
-          'fixed inset-0 z-50 flex flex-col items-center justify-center gap-3 p-6 text-center text-white',
-          isVerified ? 'bg-green-700' : 'bg-red-700',
-        )}
-      >
-        <p className="text-4xl font-bold">{isVerified ? 'VERIFIED ✓' : 'SCAM BLOCKED'}</p>
-        {lastMethod === 'link' && (
-          <p className="text-xs opacity-70">Confirmed via secure link (passkey unavailable)</p>
-        )}
-      </div>
+      <ResultScreen verified={result === 'verified'} answer={lastAnswer} method={lastMethod} name={resultName} />
     );
   }
 
@@ -400,47 +400,29 @@ export default function Verify() {
   // prompt doc briefly reports state:'verifying' again for it.
   if (prompt?.state === 'verifying' && prompt.callId && !answeredCallIds.has(prompt.callId)) {
     return (
-      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-6 bg-black/95 p-6 text-center text-white">
-        <p className="text-2xl">Is {prompt.claimedIdentity ?? 'someone'} calling Grandma right now?</p>
-        <p className="text-6xl font-bold tabular-nums">{secondsLeft}s</p>
-        {answerError && <p className="text-sm text-red-400">{answerError}</p>}
-        <div className="flex gap-4">
-          <button
-            type="button"
-            onClick={() => void handleAnswer('yes')}
-            disabled={answering}
-            className="rounded-lg bg-green-600 px-10 py-6 text-2xl font-semibold disabled:opacity-50"
-          >
-            Yes
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleAnswer('no')}
-            disabled={answering}
-            className="rounded-lg bg-red-600 px-10 py-6 text-2xl font-semibold disabled:opacity-50"
-          >
-            No
-          </button>
-        </div>
-        {prompt.token && <p className="text-xs opacity-50">Falls back to a secure link if Face ID/Touch ID isn't available</p>}
-      </div>
+      <PromptScreen
+        key={prompt.callId}
+        name={prompt.claimedIdentity ?? undefined}
+        claimedText={prompt.claimedText ?? undefined}
+        secondsLeft={secondsLeft}
+        answering={answering}
+        answeringChoice={answeringChoice}
+        error={answerError}
+        hasFallbackToken={!!prompt.token}
+        // Called directly from the click handler so WebAuthn keeps its user-gesture context.
+        onYes={() => void handleAnswer('yes')}
+        onNo={() => void handleAnswer('no')}
+      />
     );
   }
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center gap-4 p-6 text-center">
-      <h1 className="text-2xl font-bold">Armed — waiting for a call</h1>
-      <p className="text-muted-foreground">This phone is paired and ready to confirm calls.</p>
-      <p className="text-xs text-muted-foreground">
-        {passkeyEnrolled ? 'Passkey: enrolled' : 'Passkey: not enrolled — using secure link'}
-      </p>
-      {!alertsEnabled ? (
-        <Button onClick={handleEnableAlerts} size="lg" variant="outline">
-          Enable alerts
-        </Button>
-      ) : (
-        <p className="text-sm text-muted-foreground">Alerts enabled ✓</p>
-      )}
-    </div>
+    <ArmedScreen
+      memberName={memberDisplayName(memberId)}
+      passkeyEnrolled={passkeyEnrolled}
+      alertsEnabled={alertsEnabled}
+      connected={connected}
+      onEnableAlerts={handleEnableAlerts}
+    />
   );
 }
