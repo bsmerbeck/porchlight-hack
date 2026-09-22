@@ -14,6 +14,8 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { StatusDot, type StatusTone } from './StatusDot';
+import { useOperatorController } from './useOperatorController';
+import { useOperatorVisible } from './useOperatorVisible';
 
 /** Shape of the `status/bridge` doc (D-12) plus an optional free-form message. */
 export interface OperatorStatus {
@@ -46,6 +48,19 @@ export interface OperatorBarProps {
   /** If given, shows an X that hides the bar (pair with useOperatorVisible's setVisible(false)). */
   onClose?: () => void;
   className?: string;
+  /**
+   * 06-D: when true (default) any handler / status / busy / soundboardOn you omit is filled
+   * in from the live `useOperatorController()` (resetDemo, simulated scam, attackCall,
+   * attackClips soundboard, lamp test, `status/bridge`). Explicit props always win.
+   * Set false for a purely presentational bar (e.g. /styleguide).
+   */
+  connected?: boolean;
+  /**
+   * 06-D: when true, the bar ignores D-09 visibility and always renders. Default false:
+   * the bar gates itself with useOperatorVisible (`?op=1` or press `o` 3x) and shows an X
+   * to hide, so `<OperatorBar />` alone is a complete drop-in.
+   */
+  alwaysVisible?: boolean;
 }
 
 const STALE_MS = 60_000;
@@ -67,10 +82,50 @@ function beatLabel(lastBeat: number | undefined, now: number): { tone: StatusTon
 }
 
 /**
- * Presentational floating operator console (D-09): dark glass, bottom-right, collapsible.
- * Always dark regardless of page theme. Visibility is the caller's job (see useOperatorVisible).
+ * Floating operator console (D-09): dark glass, bottom-right, collapsible, always dark.
+ * `<OperatorBar />` with no props is fully wired (live actions + status/bridge) and hides
+ * itself until `?op=1` / `o` x3. See `connected` / `alwaysVisible` to opt out.
  */
-export function OperatorBar({
+export function OperatorBar(props: OperatorBarProps) {
+  const { connected = true, alwaysVisible = false, onClose } = props;
+  const [visible, setVisible] = useOperatorVisible();
+  const show = alwaysVisible || visible;
+  const live = useOperatorController(connected && show);
+  if (!show) return null;
+  const pick = <K extends keyof OperatorBarProps>(k: K, fallback: OperatorBarProps[K]) =>
+    props[k] !== undefined ? props[k] : connected ? fallback : undefined;
+  const status = connected
+    ? { ...live.status, ...stripUndefined(props.status ?? {}) }
+    : props.status;
+  return (
+    <OperatorBarView
+      {...props}
+      onReset={pick('onReset', live.onReset)}
+      onSim={pick('onSim', live.onSim)}
+      onAttack={pick('onAttack', live.onAttack)}
+      onSoundboard={pick('onSoundboard', live.onSoundboard)}
+      soundboardOn={pick('soundboardOn', live.soundboardOn)}
+      onLampTest={pick('onLampTest', live.onLampTest)}
+      busy={props.busy !== undefined ? props.busy : connected ? live.busy : null}
+      status={status}
+      onClose={
+        alwaysVisible && !onClose
+          ? undefined
+          : () => {
+              onClose?.();
+              setVisible(false);
+            }
+      }
+    />
+  );
+}
+
+function stripUndefined<T extends object>(o: T): Partial<T> {
+  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as Partial<T>;
+}
+
+/** Presentational bar (the 06-A OperatorBar body). */
+function OperatorBarView({
   onReset,
   onSim,
   onAttack,

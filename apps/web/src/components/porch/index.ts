@@ -14,6 +14,14 @@ export {
 export { StatusDot, type StatusDotProps, type StatusTone } from './StatusDot';
 export { useOperatorVisible, OPERATOR_STORAGE_KEY } from './useOperatorVisible';
 export {
+  useOperatorController,
+  useBridgeStatus,
+  getDemoToken,
+  DEMO_TOKEN_STORAGE_KEY,
+  LAMP_TEST_EVENT,
+  type OperatorController,
+} from './useOperatorController';
+export {
   deriveStageState,
   stateVisual,
   stateKey,
