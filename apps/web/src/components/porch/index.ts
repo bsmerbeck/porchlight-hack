@@ -26,6 +26,8 @@ export {
   deriveFreshStageState,
   lastActivity,
   isStaleLive,
+  isAbandonedLive,
+  isSupersededLive,
   STALE_LIVE_MS,
   stateVisual,
   stateKey,

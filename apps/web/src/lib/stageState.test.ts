@@ -4,6 +4,8 @@ import {
   STALE_LIVE_MS,
   deriveFreshStageState,
   deriveStageState,
+  isAbandonedLive,
+  isSupersededLive,
   lastActivity,
   isTerminalCall,
   stateVisual,
@@ -137,5 +139,41 @@ describe('deriveFreshStageState (06-H stale live filter)', () => {
     expect(deriveFreshStageState([stale, fresh], T0).call).toBe(fresh);
     const result = { state: 'scam' as const, startedAt: T0 - 30_000, endedAt: T0 - 1_000 };
     expect(deriveFreshStageState([stale, result], T0).mode).toBe('result');
+  });
+});
+
+describe('06-I: a newer call supersedes an older abandoned live call', () => {
+  // Live repro: sYlM (simulator, screening, started 18:14Z, operator left /sim mid-script)
+  // and kx24 (started ~18:15Z, ended scam at 18:16:49Z). /stage showed SCREENING for sYlM.
+  const T0 = Date.UTC(2026, 8, 22, 18, 14, 0);
+  const old = c({ id: 'sYlM', state: 'screening', startedAt: T0, turns: [{ at: T0 + 20_000 }] } as Partial<T>);
+  const newer = c({ id: 'kx24', state: 'scam', outcome: 'scam', startedAt: T0 + 60_000, endedAt: T0 + 169_000 });
+
+  it('shows the newer SCAM result, not the older screening call', () => {
+    const now = T0 + 175_000; // 6s after kx24 ended, well within the 10-min stale window
+    expect(deriveStageState([old, newer], now)).toEqual({ mode: 'result', call: newer });
+    expect(deriveStageState([newer, old], now)).toEqual({ mode: 'result', call: newer });
+    expect(deriveFreshStageState([newer, old], now)).toEqual({ mode: 'result', call: newer });
+  });
+
+  it('goes to ready once the newer result hold expires (old call never resurfaces)', () => {
+    const now = T0 + 169_000 + RESULT_HOLD_MS + 1;
+    expect(deriveFreshStageState([old, newer], now)).toEqual({ mode: 'ready' });
+  });
+
+  it('a newer live call supersedes an older live call', () => {
+    const newerLive = c({ id: 'n', state: 'screening', startedAt: T0 + 60_000 });
+    expect(deriveStageState([old, newerLive], T0 + 70_000).call).toBe(newerLive);
+  });
+
+  it('isSupersededLive / isAbandonedLive flag the older call as ended for history rows', () => {
+    const now = T0 + 175_000;
+    expect(isSupersededLive(old, [old, newer])).toBe(true);
+    expect(isSupersededLive(newer, [old, newer])).toBe(false); // terminal, never "superseded"
+    expect(isSupersededLive(old, [old])).toBe(false);
+    expect(isAbandonedLive(old, [old, newer], now)).toBe(true);
+    expect(isAbandonedLive(old, [old], now)).toBe(false);
+    // stale cutoff still applies on its own
+    expect(isAbandonedLive(old, [old], T0 + 20_000 + STALE_LIVE_MS)).toBe(true);
   });
 });
