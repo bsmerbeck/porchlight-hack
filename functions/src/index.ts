@@ -3,8 +3,9 @@ import { onDocumentCreated } from 'firebase-functions/firestore';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { WaitlistPayload, CALL_STATES } from '@porchlight/shared';
-import { anthropicKey, twilioAccountSid, twilioAuthToken, elevenLabsKey } from './secrets.js';
+import { anthropicKey, twilioAccountSid, twilioAuthToken, elevenLabsKey, elevenLabsLlmToken } from './secrets.js';
 import { startSimulatedCall, simulateTurn } from './screening/simulateTurn.js';
+import { elevenlabsCustomLlm } from './screening/elevenlabsCustomLlm.js';
 
 initializeApp();
 
@@ -14,9 +15,12 @@ const REGION = 'us-central1';
 // directly without a circular import through this file. Re-exported here so
 // `functions:secrets:set` + deploy binding are exercised tonight. Only
 // ANTHROPIC_API_KEY has a real value tonight; the others are placeholders until
-// Phase 2's human checkpoint.
-export { anthropicKey, twilioAccountSid, twilioAuthToken, elevenLabsKey };
+// Phase 2's human checkpoint. ELEVENLABS_LLM_TOKEN is a shared bearer secret the
+// executor generates itself (see 02-02-SUMMARY.md "Human follow-up").
+export { anthropicKey, twilioAccountSid, twilioAuthToken, elevenLabsKey, elevenLabsLlmToken };
 export { startSimulatedCall, simulateTurn };
+// 02-02 Task 1: elevenlabsCustomLlm is the agent's entire brain, wired to runTurn (02-01).
+export { elevenlabsCustomLlm };
 
 export const joinWaitlist = onCall({ region: REGION, cors: true, maxInstances: 5 }, async (req) => {
   const parsed = WaitlistPayload.safeParse(req.data);
