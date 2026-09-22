@@ -103,13 +103,48 @@ Deferred. Tracked but not in this roadmap.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (filled by roadmap) | | |
+| FND-01 | Phase 1 | Pending |
+| FND-02 | Phase 1 | Pending |
+| FND-03 | Phase 1 | Pending |
+| LAND-01 | Phase 1 | Pending |
+| LAND-02 | Phase 1 | Pending |
+| LAND-03 | Phase 1 | Pending |
+| LAND-04 | Phase 1 | Pending |
+| CALL-01 | Phase 2 | Pending |
+| CALL-02 | Phase 2 | Pending |
+| CALL-03 | Phase 2 | Pending |
+| CALL-04 | Phase 2 | Pending |
+| CALL-05 | Phase 2 | Pending |
+| RISK-01 | Phase 2 | Pending |
+| RISK-02 | Phase 2 | Pending |
+| RISK-03 | Phase 2 | Pending |
+| RISK-04 | Phase 5 | Pending |
+| VER-01 | Phase 4 | Pending |
+| VER-02 | Phase 4 | Pending |
+| VER-03 | Phase 4 | Pending |
+| VER-04 | Phase 4 | Pending |
+| VER-05 | Phase 4 | Pending |
+| DASH-01 | Phase 4 | Pending |
+| DASH-02 | Phase 4 | Pending |
+| DASH-03 | Phase 4 | Pending |
+| LAMP-01 | Phase 3 | Pending |
+| LAMP-02 | Phase 3 | Pending |
+| LAMP-03 | Phase 3 | Pending |
+| LAMP-04 | Phase 3 | Pending |
+| ATK-01 | Phase 5 | Pending |
+| ATK-02 | Phase 5 | Pending |
+| ATK-03 | Phase 5 | Pending |
+| DEMO-01 | Phase 5 | Pending |
+| DEMO-02 | Phase 5 | Pending |
+| DEMO-03 | Phase 5 | Pending |
+| DEMO-04 | Phase 5 | Pending |
+| DEMO-05 | Phase 2 | Pending |
 
 **Coverage:**
 - v1 requirements: 36 total
-- Mapped to phases: 0
-- Unmapped: 36 ⚠️
+- Mapped to phases: 36
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-09-21*
-*Last updated: 2026-09-21 after initial definition*
+*Last updated: 2026-09-21 after roadmap creation (traceability mapped)*
