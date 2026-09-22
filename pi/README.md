@@ -89,7 +89,7 @@ curl http://169.254.10.2:8080/joystick
 # Rotation (see "Auto-Orientation (IMU)" below for the full contract):
 curl -X POST http://169.254.10.2:8080/state -H 'content-type: application/json' -d '{"rotation":90}'
 curl -X POST http://169.254.10.2:8080/state -H 'content-type: application/json' -d '{"rotation":"auto"}'
-curl http://169.254.10.2:8080/health   # now also reports "rotation" and "auto_rotate"
+curl http://169.254.10.2:8080/health   # now also reports "rotation", "auto_rotate", "rotation_source"
 ```
 
 Expected visuals (eyeball the lamp — a test harness cannot see LEDs):
@@ -157,24 +157,27 @@ per the discovery order above.
   if auto-rotate ever picks the wrong orientation for how the lamp ends up
   mounted and there's no time to debug the IMU mapping before the demo.
 
-### Orientation mapping — NEEDS PHYSICAL CONFIRMATION
+### Orientation mapping — PHYSICALLY CONFIRMED (03-IMU-FIX, 2026-09-22)
 
 `orientation_loop` samples gravity every 2 seconds. When the board is lying
 flat (Z-axis dominant), rotation is left unchanged (no way to infer "up" from
-gravity alone when the display is horizontal). When tilted onto an edge
+gravity alone when the display is horizontal — see "Joystick Orientation
+Calibration" below for how to handle that case). When tilted onto an edge
 (X or Y dominant), the mapping is:
 
-| Dominant axis | Sign | Rotation | Constant in `lamp.py` |
-|---|---|---|---|
-| Y | positive | 0° | `ROTATION_FOR_POSITIVE_Y` |
-| Y | negative | 180° | `ROTATION_FOR_NEGATIVE_Y` |
-| X | positive | 90° | `ROTATION_FOR_POSITIVE_X` |
-| X | negative | 270° | `ROTATION_FOR_NEGATIVE_X` |
+| Dominant axis | Sign | Physical tilt | Rotation | Constant in `lamp.py` |
+|---|---|---|---|---|
+| Y | positive | board standing on a SHORT edge, ethernet port edge down | 0° | `ROTATION_FOR_POSITIVE_Y` |
+| Y | negative | board standing on a SHORT edge, ethernet port edge up | 180° | `ROTATION_FOR_NEGATIVE_Y` |
+| X | positive | board standing on a LONG edge, ethernet port edge to the right | 270° | `ROTATION_FOR_POSITIVE_X` |
+| X | negative | board standing on a LONG edge, ethernet port edge to the left | 90° | `ROTATION_FOR_NEGATIVE_X` |
 
-This mapping is a **best-effort default** written without a physical tilt
-test against the real hardware (the Pi was unreachable this session — see
-`03-IMU-SUMMARY.md`). **A human needs to confirm it** once the Pi is back on
-the bench:
+**Physically confirmed against the real Pi.** The Y-axis (SHORT-edge,
+ethernet up/down) pair was already correct. The X-axis (LONG-edge, ethernet
+left/right) pair was 180° wrong in both directions — upside down at both
+tilts — and was fixed by swapping `ROTATION_FOR_POSITIVE_X` /
+`ROTATION_FOR_NEGATIVE_X` (equivalent to adding 180° to each). If a future
+remount ever needs re-calibrating, the procedure is the same:
 
 1. Deploy this build (`bash pi/deploy.sh`) and set a state that's easy to
    glance at, e.g. `curl -X POST http://169.254.10.2:8080/state -d '{"state":"verified","name":"Brenden"}'`.
@@ -184,14 +187,83 @@ the bench:
    `lamp.py: auto-rotate -> 90 (x=0.87g y=0.05g z=0.12g)`
 3. For each tilt, confirm the scrolling "BRENDEN" text reads right-side-up
    from that viewing angle. If any orientation is upside down or sideways
-   when it should read correctly, swap the corresponding constant (e.g. if
-   tilting the board so the joystick ends up on the right produces upside
-   down text at `rotation=90`, that physical tilt actually needs `270` —
-   swap `ROTATION_FOR_POSITIVE_X` and `ROTATION_FOR_NEGATIVE_X`, or the Y
-   pair, depending on which tilt was wrong) and redeploy.
+   when it should read correctly, swap the corresponding constant pair
+   (`ROTATION_FOR_POSITIVE_X`/`ROTATION_FOR_NEGATIVE_X` or the Y pair,
+   depending on which tilt was wrong) and redeploy.
 4. If the IMU mapping can't be nailed down before the demo, use
    `PORCHLIGHT_ROTATION` to pin whatever rotation matches the lamp's actual
    fixed mounting instead of relying on auto-rotate.
+
+## Joystick Orientation Calibration (flat mounting)
+
+When the board is lying flat, gravity alone can't tell auto-rotate which way
+is "up" — `_rotation_from_gravity` returns `None` (Z-dominant) and the last
+rotation is kept. A **long press (≥ `LONG_PRESS_SEC` = 0.8s) on any joystick
+direction** lets a human resolve this manually: point the joystick toward
+whichever direction is "toward me / the table edge nearest me", press and
+hold that direction for at least 0.8s, and the lamp pins rotation so that
+direction becomes the bottom of the rendered text.
+
+**Derivation.** The joystick's four direction switches are wired to fixed
+physical positions on the same PCB as the LED matrix, so pressing a given
+direction always corresponds to the same *native* (pre-`_rotate_frame`) edge
+of the 8x8 grid, regardless of how the whole assembly is mounted in the
+housing (mounting rotation applies equally to both). Given
+`_rotate_frame`'s row-major clockwise rotation math, the rotation that puts a
+given native edge at the *bottom* of the output frame is:
+
+| Direction pressed | Native edge | Rotation | Constant in `lamp.py` |
+|---|---|---|---|
+| Down | bottom (row 7) | 0° | `ROTATION_FOR_JOYSTICK_DOWN` |
+| Right | right (col 7) | 90° | `ROTATION_FOR_JOYSTICK_RIGHT` |
+| Up | top (row 0) | 180° | `ROTATION_FOR_JOYSTICK_UP` |
+| Left | left (col 0) | 270° | `ROTATION_FOR_JOYSTICK_LEFT` |
+
+This is a **best-effort default derived from the grid math**, not yet
+physically confirmed for every one of the four directions on the real
+mounted board (only the "flat, joystick nub bottom-right, rotation=180"
+data point was confirmed this session). **A human should confirm each
+direction** — see "Manual verification" below — and if any direction is
+wrong, swap the matching constant the same way the IMU constants are swapped.
+
+**Behavior:**
+- Long press a direction: pins `rotation` to the matching constant, sets
+  `auto_rotate` to `false`, sets `rotation_source` to `"joystick"`, persists
+  `{"rotation": N}` to `/home/pi/porchlight/rotation.json` (atomic write —
+  survives a reboot), and flashes an arrow on the matrix for 1s
+  (`CONFIRMATION_FLASH_SEC`) — the arrow always points at the render's
+  bottom after rotation, confirming the calibration visually.
+- Long press center: clears the persisted file, sets `auto_rotate` back to
+  `true`, sets `rotation_source` to `"auto"`, and flashes a static "A" for 1s.
+- Short presses (< 0.8s) are **unaffected** — center still sets the one-shot
+  `joystick_pressed` alert flag, up/down/left/right still drive the local
+  demo-mode cycle (both classified only at *release*, once the press
+  duration is known).
+- On startup, `main()` loads (in priority order): `PORCHLIGHT_ROTATION` env
+  var, then a persisted joystick rotation from disk, then falls back to
+  `DEFAULT_ROTATION` (`180`, confirmed correct for this board flat) with
+  `auto_rotate=true`. A persisted joystick rotation wins over IMU auto-rotate
+  until the next center long-press, since it sets `auto_rotate=false`.
+- `GET /health` reports `rotation_source`: `"auto"` (IMU-driven) |
+  `"joystick"` (long-press, persisted) | `"api"` (`POST /state` pin) |
+  `"env"` (`PORCHLIGHT_ROTATION`).
+
+**Manual verification (human — cannot be automated, no way to see the LEDs
+or feel a physical press from a script):**
+1. Lay the board flat on the table.
+2. Long-press (hold ≥ 1s to be safe) the joystick direction that faces you.
+3. Watch for the 1s arrow flash — it should point toward you (i.e. toward
+   the bottom of the matrix as you're looking at it).
+4. Confirm `curl http://169.254.10.2:8080/health` now shows
+   `"auto_rotate": false, "rotation_source": "joystick"` and a `rotation`
+   value.
+5. Set `{"state":"verified","name":"Brenden"}` and confirm "BRENDEN" scrolls
+   right-side-up toward you.
+6. Long-press the center button; confirm the "A" flash, and `/health` shows
+   `"auto_rotate": true, "rotation_source": "auto"` again.
+7. `sudo systemctl restart porchlight-lamp.service` while the joystick
+   rotation is still pinned (undo step 6 first) and confirm the pinned
+   rotation survives the restart (persisted-to-disk load on startup).
 
 ## Font
 
