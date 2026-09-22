@@ -54,11 +54,13 @@ export async function releaseCall(callId: string): Promise<void> {
   const providerCallId = (snap.data() as { providerCallId?: string } | undefined)?.providerCallId;
 
   // Verdict first: a Twilio failure must never leave a verified call stuck on 'verifying'.
-  await ref.update({ state: 'verified', outcome: 'verified' });
+  await ref.update({ state: 'verified', outcome: 'verified', endedAt: Date.now() });
 
+  // Demo has no real call-bridge, so a verified call ends here (no lingering agent turns
+  // re-prompting the family phone).
   if (providerCallId) {
     try {
-      await updateCallWithSay(providerCallId, "Thanks, I've confirmed who you are. I'll put you through.", false);
+      await updateCallWithSay(providerCallId, "Thanks, you're confirmed. I'll let Margaret know it's really you. Goodbye for now.", true);
     } catch (err) {
       console.error('releaseCall: Twilio update failed (verdict already written)', { callId, err });
     }

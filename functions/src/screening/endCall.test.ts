@@ -101,7 +101,7 @@ describe('forceVerdict', () => {
     expect(doc.endedAt).toBeTypeOf('number');
   });
 
-  it('verified verdict releases the call with a non-hangup "put you through" line, writes state/outcome:verified', async () => {
+  it('verified verdict releases the call with a confirmation line and hangs up, writes state/outcome:verified', async () => {
     seedCall('call-2', { providerCallId: 'CAtest2', state: 'verifying' });
 
     await forceVerdict.run({ data: { callId: 'call-2', verdict: 'verified' } } as never);
@@ -110,8 +110,8 @@ describe('forceVerdict', () => {
     const [sid, opts] = mockCallsUpdate.mock.calls[0];
     expect(sid).toBe('CAtest2');
     const twiml = (opts as { twiml: string }).twiml;
-    expect(twiml).not.toContain('<Hangup/>');
-    expect(twiml).toContain('put you through');
+    expect(twiml).toContain('<Hangup/>');
+    expect(twiml).toContain('really you');
 
     const doc = fakeDb.__docs.get('calls/call-2') as Record<string, unknown>;
     expect(doc.state).toBe('verified');
