@@ -5,6 +5,13 @@ service cloud.firestore {
     match /stats/waitlist {
       allow get: if true;
     }
+    // Public single-doc read for the ambient lamp state (state + first name only — see
+    // functions/src/lamp.ts's mirrorActiveCallToLamp for what's actually written here).
+    // Only the Admin SDK (the mirror Function) may write it; no client write, ever (T-03-07).
+    match /lamp/current {
+      allow get: if true;
+      allow write: if false;
+    }
     // Everything else closed to clients; Admin SDK in Functions bypasses rules
     match /{document=**} {
       allow read, write: if false;
