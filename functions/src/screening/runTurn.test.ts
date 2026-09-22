@@ -140,6 +140,64 @@ describe('runTurn', () => {
     expect((lastUpdate.data.verification as { memberId: string }).memberId).toBe('brenden');
   });
 
+  // 02-FIX regression test: the live bug this fixes was a caller saying "it's Brenden"
+  // on turn 1, then delivering a scam script on turn 2 WITHOUT repeating the name --
+  // Claude's own turn-2 output recommended 'end' at a high risk score, exactly as it did
+  // on the real call. The claimed identity must carry forward from turn 1 and force
+  // 'verify' (never 'scam'/'end') on turn 2.
+  it('carries a claimed identity forward and forces state:verifying (never scam) when a later turn recommends end at high risk', async () => {
+    mockClaudeTurn({
+      reply: 'Hi Brenden, what can I help with?',
+      risk: 20,
+      tactics: ['impersonation'],
+      claimedIdentity: 'Brenden',
+      recommendedAction: 'continue',
+    });
+    mockClaudeTurn({
+      reply: "I'm sorry, but I can't help with that. Please take care.",
+      risk: 95,
+      tactics: ['urgency', 'secrecy', 'payment_method', 'authority_bail'],
+      claimedIdentity: null,
+      recommendedAction: 'end',
+    });
+
+    await runTurn({ callId: 'call-jail-brenden', householdId: DEMO_HOUSEHOLD_ID, callerText: "Hi grandma, it's me, Brenden." });
+    const result = await runTurn({
+      callId: 'call-jail-brenden',
+      householdId: DEMO_HOUSEHOLD_ID,
+      callerText: 'I need bail money in gift cards, do not tell mom.',
+    });
+
+    expect(result.endCall).toBe(false);
+    const lastUpdate = fakeDb.__updateCalls.at(-1)!;
+    expect(lastUpdate.data.state).toBe('verifying');
+    expect(lastUpdate.data.state).not.toBe('scam');
+    expect((lastUpdate.data.verification as { memberId: string }).memberId).toBe('brenden');
+    expect((lastUpdate.data.risk as { claimedIdentity: string }).claimedIdentity).toBe('Brenden');
+    expect((lastUpdate.data.risk as { recommendedAction: string }).recommendedAction).toBe('verify');
+    // Claude's own turn-2 reply assumed the call was ending -- it must be replaced with
+    // the standard hold-for-verification line, never spoken as-is.
+    const doc = fakeDb.__docs.get('calls/call-jail-brenden') as { turns: Array<{ role: string; text: string }> };
+    expect(doc.turns.at(-1)!.text).toBe("One moment, I'm checking with the family.");
+  });
+
+  it('does NOT override recommendedAction when a low-risk, unclaimed turn recommends end (downgrades to continue)', async () => {
+    mockClaudeTurn({
+      reply: 'ok',
+      risk: 40,
+      tactics: ['urgency'],
+      claimedIdentity: null,
+      recommendedAction: 'end',
+    });
+
+    const result = await runTurn({ callId: 'call-marginal-end', householdId: DEMO_HOUSEHOLD_ID, callerText: 'hi' });
+
+    expect(result.endCall).toBe(false);
+    const lastUpdate = fakeDb.__updateCalls.at(-1)!;
+    expect(lastUpdate.data.state).toBeUndefined();
+    expect((lastUpdate.data.risk as { recommendedAction: string }).recommendedAction).toBe('continue');
+  });
+
   it('does NOT set state:verifying for an unrecognized claimedIdentity', async () => {
     mockClaudeTurn({
       reply: 'Who is this again?',
