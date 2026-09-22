@@ -1,5 +1,5 @@
 {
-  "model_profile": "inherit",
+  "model_profile": "budget",
   "commit_docs": true,
   "parallelization": true,
   "search_gitignored": false,
@@ -32,7 +32,7 @@
     "human_verify_mode": "end-of-phase",
     "context_guard_mode": "warn",
     "text_mode": false,
-    "compact_content": false,
+    "compact_content": true,
     "research_before_questions": false,
     "discuss_mode": "discuss",
     "skip_discuss": false,
