@@ -13,3 +13,6 @@ export const elevenLabsKey = defineSecret('ELEVENLABS_API_KEY');
 // hex bytes) and pasted into the ElevenLabs dashboard's Custom LLM "Add Secret" field, so
 // elevenlabsCustomLlm.ts can verify inbound requests actually came from our own agent (T-02-05).
 export const elevenLabsLlmToken = defineSecret('ELEVENLABS_LLM_TOKEN');
+// Phase 4's VER-05 signed-link fallback -- a server-only HMAC key, distinct from the
+// four vendor secrets above. See functions/src/verification/verifyLink.ts.
+export const verifyLinkSecret = defineSecret('VERIFY_LINK_SECRET');

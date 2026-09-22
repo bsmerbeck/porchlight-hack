@@ -12,6 +12,20 @@ service cloud.firestore {
       allow get: if true;
       allow write: if false;
     }
+    // Public single-doc read for a family member's realtime verification prompt (VER-02).
+    // Only the Admin SDK (mirrorActiveCallToLamp) may write it; no client write, ever.
+    match /prompts/{memberId} {
+      allow get: if true;
+      allow write: if false;
+    }
+    // Public read of the household's live/history call feed (DASH-01/02) — the full D-05
+    // CallDoc shape mirrored out of the closed calls/{id} collection. Only the Admin SDK
+    // (mirrorActiveCallToLamp) may write it; no client write, ever.
+    match /households/{householdId}/feed/{callId} {
+      allow get: if true;
+      allow list: if true;
+      allow write: if false;
+    }
     // Everything else closed to clients; Admin SDK in Functions bypasses rules
     match /{document=**} {
       allow read, write: if false;
