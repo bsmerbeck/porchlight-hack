@@ -156,7 +156,35 @@ async function extractCallId(body: CustomLlmRequestBody, db: Firestore): Promise
     }
   }
 
-  return `custom-llm-hash-${hashKey}`;
+  // 06-J: ElevenLabs can re-send a slightly different first user message on a later turn,
+  // which changes hashKey and used to mint a SECOND doc for the same call (double family
+  // prompt). Before minting, join the newest still-live call from the last few minutes --
+  // the demo only ever has one live call at a time.
+  const live = userMessageCount > 1 ? await findRecentLiveCall(db) : undefined;
+  if (live) {
+    await keyRef.set({ callId: live, createdAt: FieldValue.serverTimestamp() });
+    return live;
+  }
+
+  const minted = `custom-llm-hash-${hashKey}`;
+  await keyRef.set({ callId: minted, createdAt: FieldValue.serverTimestamp() });
+  return minted;
+}
+
+const RECENT_LIVE_CALL_WINDOW_MS = 3 * 60 * 1000;
+
+async function findRecentLiveCall(db: Firestore): Promise<string | undefined> {
+  const snap = await db.collection('calls').orderBy('startedAt', 'desc').limit(5).get();
+  const cutoff = Date.now() - RECENT_LIVE_CALL_WINDOW_MS;
+  for (const doc of snap.docs) {
+    const data = doc.data() as { state?: string; startedAt?: number; endedAt?: number; provider?: string };
+    if (data.provider === 'simulator') continue;
+    if (data.endedAt) continue;
+    if (data.state !== 'screening' && data.state !== 'verifying') continue;
+    if (typeof data.startedAt !== 'number' || data.startedAt < cutoff) continue;
+    return doc.id;
+  }
+  return undefined;
 }
 
 // 05-ALLOWLIST Task 2: ElevenLabs' dashboard-configured first message is static, so it
