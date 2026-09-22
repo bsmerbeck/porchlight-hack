@@ -33,7 +33,7 @@ Scope = what the 3-minute demo and the traction slide need. Demo 9PM Tue 2026-09
 - [x] **RISK-01**: Every caller turn triggers a Claude (`claude-haiku-4-5`) assessment returning structured JSON: `risk` 0-100, `tactics[]` (urgency, secrecy, payment method, authority/bail, impersonation), `claimed_identity`, `recommended_action`
 - [x] **RISK-02**: Risk and tactics update on the call document in real time and drive the dashboard meter
 - [x] **RISK-03**: When the caller claims to be a known family member, the system matches the claim to a household member and starts verification
-- [ ] **RISK-04**: After the call, Claude (`claude-sonnet-5`) writes a plain-English family report: what the caller wanted, why it was flagged, what Porchlight did
+- [x] **RISK-04**: After the call, Claude (`claude-sonnet-5`) writes a plain-English family report: what the caller wanted, why it was flagged, what Porchlight did
 
 ### Family Verification
 
@@ -64,7 +64,7 @@ Scope = what the 3-minute demo and the traction slide need. Demo 9PM Tue 2026-09
 
 ### Demo & Pitch
 
-- [ ] **DEMO-01**: One-command reset returns the system to a clean demo state (no active calls, lamp idle, seeded household)
+- [x] **DEMO-01**: One-command reset returns the system to a clean demo state (no active calls, lamp idle, seeded household)
 - [ ] **DEMO-02**: Full demo script runs end-to-end 3 times in a row without intervention, on venue Wi-Fi and on phone hotspot
 - [ ] **DEMO-03**: Recorded backup video of the full demo exists before 5PM
 - [ ] **DEMO-04**: 5-slide deck: problem + numbers, live demo, how it works, traction (signups, quotes, pilot interest), market + ask
@@ -118,7 +118,7 @@ Deferred. Tracked but not in this roadmap.
 | RISK-01 | Phase 2 | Complete (02-01) |
 | RISK-02 | Phase 2 | Complete (02-01) |
 | RISK-03 | Phase 2 | Complete (02-01) |
-| RISK-04 | Phase 5 | Pending |
+| RISK-04 | Phase 5 | Complete (05-01) |
 | VER-01 | Phase 4 | Pending |
 | VER-02 | Phase 4 | Pending |
 | VER-03 | Phase 4 | Pending |
@@ -134,7 +134,7 @@ Deferred. Tracked but not in this roadmap.
 | ATK-01 | Phase 5 | Pending |
 | ATK-02 | Phase 5 | Pending |
 | ATK-03 | Phase 5 | Pending |
-| DEMO-01 | Phase 5 | Pending |
+| DEMO-01 | Phase 5 | Complete (05-01) |
 | DEMO-02 | Phase 5 | Pending |
 | DEMO-03 | Phase 5 | Pending |
 | DEMO-04 | Phase 5 | Pending |

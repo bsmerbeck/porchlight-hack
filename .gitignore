@@ -9,6 +9,7 @@ dist/
 __pycache__/
 functions/.secret.local
 functions/lib/
+scripts/.demo.env
 *.tsbuildinfo
 *-debug.log
 .claude/worktrees/

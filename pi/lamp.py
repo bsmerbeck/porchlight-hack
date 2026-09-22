@@ -160,6 +160,18 @@ def _build_scroll_columns(name):
     return columns or [[False] * 5]
 
 
+# --- Joystick demo mode (Task 3, 05-01-PLAN.md) -----------------------------
+#
+# The fixed local cycle order the joystick's up/down/left/right walk through
+# (wrapping at both ends), and the demo name shown while `verified` is the
+# active state -- purely local, no HTTP call out, no Firestore, no bridge
+# involvement, so the lamp stays an interactive attraction on its own even
+# with no call in progress.
+DEMO_CYCLE_STATES = ["idle", "screening", "verifying", "verified", "scam"]
+DEMO_CYCLE_NAME = "Brenden"
+SELFTEST_HOLD_SEC = 2.0
+
+
 def verified_frame(t, name):
     cols = _build_scroll_columns(name)
     width = len(cols)
@@ -175,6 +187,22 @@ def verified_frame(t, name):
             if lit:
                 frame[row * 8 + display_col] = WHITE
     return frame
+
+
+def frame_for_state(target, name, t):
+    """The single state->frame dispatch, used identically by the continuous render
+    loop (whether driven by a POST /state from the bridge or a local joystick nudge)
+    and by --selftest -- one source of truth so a bridge-driven state and a
+    joystick-driven state always render the same way."""
+    if target == "idle":
+        return idle_frame(t)
+    if target in ("screening", "verifying"):
+        return screening_frame(t)
+    if target == "scam":
+        return scam_frame(t)
+    if target == "verified":
+        return verified_frame(t, name)
+    return idle_frame(t)
 
 
 # --- HTTP handler -------------------------------------------------------------
@@ -203,7 +231,11 @@ class LampHandler(BaseHTTPRequestHandler):
             with _state_lock:
                 pressed = _state["joystick_pressed"]
                 _state["joystick_pressed"] = False
-            self._json_response(200, {"pressed": pressed})
+                current_state = _state["target"]
+            # `state` reports whatever the joystick's local demo-mode cycling (or a
+            # bridge POST /state) last set -- new, additive field, so the bridge can
+            # mirror it if desired (Task 3). Existing `pressed` semantics unchanged.
+            self._json_response(200, {"pressed": pressed, "state": current_state})
             return
         self.send_response(404)
         self.end_headers()
@@ -255,16 +287,9 @@ def render_loop(matrix):
             target = _state["target"]
             name = _state["name"]
         t = time.time() - start
-        if target == "idle":
-            frame = idle_frame(t)
-        elif target in ("screening", "verifying"):
-            frame = screening_frame(t)
-        elif target == "scam":
-            frame = scam_frame(t)
-        elif target == "verified":
-            frame = verified_frame(t, name)
-        else:
-            frame = idle_frame(t)
+        # Same frame_for_state() dispatch a joystick nudge and --selftest both use --
+        # one source of truth for "what does state X look like."
+        frame = frame_for_state(target, name, t)
         matrix.draw(_apply_brightness(frame))
         time.sleep(1 / 15)
 
@@ -286,7 +311,6 @@ EVENT_FMT = "llHHi"
 EVENT_SIZE = struct.calcsize(EVENT_FMT)
 EV_KEY = 1
 KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_ENTER = 103, 108, 105, 106, 28
-_JOYSTICK_CODES = {KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_ENTER}
 
 
 def find_joystick_device():
@@ -302,19 +326,71 @@ def find_joystick_device():
     raise RuntimeError("Sense HAT joystick input device not found")
 
 
+def _cycle_joystick_state(direction):
+    """Advances the joystick demo-mode cycle forward (direction=1) or backward
+    (direction=-1) through DEMO_CYCLE_STATES, wrapping at both ends, purely locally --
+    updates the SAME shared `_state` the HTTP /state handler drives, so render_loop's
+    frame_for_state() dispatch renders a joystick nudge exactly like a bridge-driven
+    state change. Returns the new state string."""
+    with _state_lock:
+        current = _state["target"]
+        try:
+            idx = DEMO_CYCLE_STATES.index(current)
+        except ValueError:
+            idx = 0
+        new_state = DEMO_CYCLE_STATES[(idx + direction) % len(DEMO_CYCLE_STATES)]
+        _state["target"] = new_state
+        _state["name"] = DEMO_CYCLE_NAME if new_state == "verified" else None
+    return new_state
+
+
 def joystick_loop(dev_path):
+    # Center press (KEY_ENTER) keeps its pre-existing behavior UNTOUCHED -- it still
+    # only sets joystick_pressed, which the bridge polls via GET /joystick to raise
+    # the family alert. Up/down/left/right are repurposed here (Task 3) to drive the
+    # local demo-mode cycle instead of the alert flag.
+    global _last_post_at
     with open(dev_path, "rb") as f:
         while True:
             data = f.read(EVENT_SIZE)
             if len(data) < EVENT_SIZE:
                 continue
             _, _, ev_type, code, value = struct.unpack(EVENT_FMT, data)
-            if ev_type == EV_KEY and value == 1 and code in _JOYSTICK_CODES:
+            if ev_type != EV_KEY or value != 1:
+                continue
+            if code == KEY_ENTER:
                 with _state_lock:
                     _state["joystick_pressed"] = True
+            elif code in (KEY_UP, KEY_RIGHT):
+                _cycle_joystick_state(1)
+                _last_post_at = time.time()
+            elif code in (KEY_DOWN, KEY_LEFT):
+                _cycle_joystick_state(-1)
+                _last_post_at = time.time()
+
+
+def run_selftest():
+    """--selftest: walks DEMO_CYCLE_STATES in order via the SAME frame_for_state()
+    dispatch render_loop uses, holding each for SELFTEST_HOLD_SEC, then exits 0
+    without starting the HTTP server."""
+    fb_path = find_fb_device()
+    matrix = Matrix(fb_path)
+    start = time.time()
+    for state in DEMO_CYCLE_STATES:
+        name = DEMO_CYCLE_NAME if state == "verified" else None
+        hold_until = time.time() + SELFTEST_HOLD_SEC
+        while time.time() < hold_until:
+            frame = frame_for_state(state, name, time.time() - start)
+            matrix.draw(_apply_brightness(frame))
+            time.sleep(1 / 15)
+    print(f"lamp.py --selftest: cycled {len(DEMO_CYCLE_STATES)} states successfully")
+    return 0
 
 
 def main():
+    if "--selftest" in sys.argv:
+        sys.exit(run_selftest())
+
     fb_path = find_fb_device()
     matrix = Matrix(fb_path)
 
