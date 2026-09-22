@@ -9,6 +9,7 @@ import { DEMO_HOUSEHOLD_ID, type CallDoc, type HouseholdDoc, type HouseholdMembe
 import { forceEndCall, releaseCall } from '../screening/endCall.js';
 import { checkVerifyToken } from './verifyLink.js';
 import { generateAuthenticationOptions, verifyAuthenticationResponse, rpID, origin, decodePublicKey } from './webauthn.js';
+import { twilioAccountSid, twilioAuthToken, verifyLinkSecret } from '../secrets.js';
 
 const REGION = 'us-central1';
 
@@ -84,87 +85,90 @@ const AnswerVerificationInput = z.object({
  * call: once `verification.answer` is set, a second call is rejected (VER-05 + the passkey
  * ceremony both close after one use).
  */
-export const answerVerification = onCall({ region: REGION, cors: true, maxInstances: 5 }, async (req) => {
-  const { callId, memberId, answer, response, token } = AnswerVerificationInput.parse(req.data);
-  const db = getFirestore();
-  const callRef = db.doc(`calls/${callId}`);
-  const callSnap = await callRef.get();
-  if (!callSnap.exists) {
-    throw new HttpsError('not-found', `Unknown call: ${callId}`);
-  }
-  const callData = callSnap.data() as CallDoc;
+export const answerVerification = onCall(
+  { region: REGION, cors: true, maxInstances: 5, secrets: [twilioAccountSid, twilioAuthToken, verifyLinkSecret] },
+  async (req) => {
+    const { callId, memberId, answer, response, token } = AnswerVerificationInput.parse(req.data);
+    const db = getFirestore();
+    const callRef = db.doc(`calls/${callId}`);
+    const callSnap = await callRef.get();
+    if (!callSnap.exists) {
+      throw new HttpsError('not-found', `Unknown call: ${callId}`);
+    }
+    const callData = callSnap.data() as CallDoc;
 
-  if (callData.verification?.answer) {
-    throw new HttpsError('failed-precondition', 'Already answered');
-  }
+    if (callData.verification?.answer) {
+      throw new HttpsError('failed-precondition', 'Already answered');
+    }
 
-  if (answer !== 'yes') {
+    if (answer !== 'yes') {
+      await callRef.update({
+        verification: { ...callData.verification, answer, answeredAt: Date.now() },
+        state: 'scam',
+        outcome: 'scam',
+        endedAt: Date.now(),
+      });
+      if (callData.providerCallId) {
+        await forceEndCall(callData.providerCallId, "I'm sorry, but this call has been identified as a scam and is being ended now.");
+      }
+      return { verified: false };
+    }
+
+    // answer === 'yes' from here on -- never trust it without real proof (T-04-01).
+    if (!response && !token) {
+      throw new HttpsError('invalid-argument', 'Yes requires a passkey response or a link token');
+    }
+
+    let method: 'passkey' | 'link';
+
+    if (token) {
+      // VER-05 fallback -- no WebAuthn ceremony at all, just a constant-time HMAC check.
+      if (!checkVerifyToken(callId, memberId, token)) {
+        throw new HttpsError('permission-denied', 'Bad or expired link');
+      }
+      method = 'link';
+    } else {
+      const challengeRef = db.doc(`webauthnChallenges/${memberId}`);
+      const challengeSnap = await challengeRef.get();
+      const challengeData = challengeSnap.data() as { challenge: string; expiresAt: number } | undefined;
+      if (!challengeSnap.exists || !challengeData || challengeData.expiresAt < Date.now()) {
+        throw new HttpsError('permission-denied', 'Authentication challenge expired');
+      }
+
+      const member = await getMember(memberId);
+      const responseId = (response as { id?: string } | undefined)?.id;
+      const passkey = member?.passkeys?.find((p) => p.id === responseId);
+      if (!passkey) {
+        throw new HttpsError('permission-denied', 'Unknown passkey');
+      }
+
+      const verification = await verifyAuthenticationResponse({
+        response: response as Parameters<typeof verifyAuthenticationResponse>[0]['response'],
+        expectedChallenge: challengeData.challenge,
+        expectedOrigin: origin,
+        expectedRPID: rpID,
+        credential: {
+          id: passkey.id,
+          publicKey: decodePublicKey(passkey.publicKey),
+          counter: passkey.counter,
+          transports: passkey.transports,
+        },
+      });
+
+      if (!verification.verified) {
+        throw new HttpsError('permission-denied', 'Passkey assertion failed');
+      }
+
+      await updatePasskeyCounter(memberId, passkey.id, verification.authenticationInfo.newCounter);
+      await challengeRef.delete();
+      method = 'passkey';
+    }
+
     await callRef.update({
-      verification: { ...callData.verification, answer, answeredAt: Date.now() },
-      state: 'scam',
-      outcome: 'scam',
-      endedAt: Date.now(),
+      verification: { ...callData.verification, answer: 'yes', answeredAt: Date.now(), method },
     });
-    if (callData.providerCallId) {
-      await forceEndCall(callData.providerCallId, "I'm sorry, but this call has been identified as a scam and is being ended now.");
-    }
-    return { verified: false };
-  }
+    await releaseCall(callId);
 
-  // answer === 'yes' from here on -- never trust it without real proof (T-04-01).
-  if (!response && !token) {
-    throw new HttpsError('invalid-argument', 'Yes requires a passkey response or a link token');
-  }
-
-  let method: 'passkey' | 'link';
-
-  if (token) {
-    // VER-05 fallback -- no WebAuthn ceremony at all, just a constant-time HMAC check.
-    if (!checkVerifyToken(callId, memberId, token)) {
-      throw new HttpsError('permission-denied', 'Bad or expired link');
-    }
-    method = 'link';
-  } else {
-    const challengeRef = db.doc(`webauthnChallenges/${memberId}`);
-    const challengeSnap = await challengeRef.get();
-    const challengeData = challengeSnap.data() as { challenge: string; expiresAt: number } | undefined;
-    if (!challengeSnap.exists || !challengeData || challengeData.expiresAt < Date.now()) {
-      throw new HttpsError('permission-denied', 'Authentication challenge expired');
-    }
-
-    const member = await getMember(memberId);
-    const responseId = (response as { id?: string } | undefined)?.id;
-    const passkey = member?.passkeys?.find((p) => p.id === responseId);
-    if (!passkey) {
-      throw new HttpsError('permission-denied', 'Unknown passkey');
-    }
-
-    const verification = await verifyAuthenticationResponse({
-      response: response as Parameters<typeof verifyAuthenticationResponse>[0]['response'],
-      expectedChallenge: challengeData.challenge,
-      expectedOrigin: origin,
-      expectedRPID: rpID,
-      credential: {
-        id: passkey.id,
-        publicKey: decodePublicKey(passkey.publicKey),
-        counter: passkey.counter,
-        transports: passkey.transports,
-      },
-    });
-
-    if (!verification.verified) {
-      throw new HttpsError('permission-denied', 'Passkey assertion failed');
-    }
-
-    await updatePasskeyCounter(memberId, passkey.id, verification.authenticationInfo.newCounter);
-    await challengeRef.delete();
-    method = 'passkey';
-  }
-
-  await callRef.update({
-    verification: { ...callData.verification, answer: 'yes', answeredAt: Date.now(), method },
-  });
-  await releaseCall(callId);
-
-  return { verified: true };
-});
+    return { verified: true };
+  },
+);
