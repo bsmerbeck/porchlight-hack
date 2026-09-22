@@ -18,6 +18,7 @@ import {
   RESULT_HOLD_MS,
   type StateKey,
 } from '@/components/porch';
+import { useVerificationBackstop } from '@/lib/useVerificationBackstop';
 
 /**
  * DASH-03 / 06-D projector stage view (`/stage`). Reads ONLY the public
@@ -165,6 +166,8 @@ export default function Stage() {
   }, [calls, now]);
 
   const call = view.call;
+  // 06-I: server-side verification-timeout backstop (phone may be locked/closed).
+  useVerificationBackstop(view.mode === 'live' ? call : undefined, now);
   const key: StateKey = view.mode === 'ready' ? 'idle' : stateKey(call);
 
   // Audio cue once per (call, state) transition -- never on the first snapshot after a refresh.

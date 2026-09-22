@@ -70,6 +70,44 @@ export const startPasskeyAuthentication = onCall({ region: REGION, cors: true, m
   return options;
 });
 
+/**
+ * The ONE "No"/"timeout" verdict path (04-FIX verdict finality): records the answer, marks
+ * the call scam, and hangs up the Twilio leg. Shared by answerVerification (the phone) and
+ * expireVerification (06-I server-side backstop) so both apply byte-identical effects.
+ * Callers MUST have already checked `verification.answer` is unset.
+ */
+async function applyNoOrTimeoutVerdict(
+  callId: string,
+  callData: CallDoc,
+  answer: 'no' | 'timeout',
+  log: Record<string, unknown>,
+): Promise<void> {
+  const callRef = getFirestore().doc(`calls/${callId}`);
+  await callRef.update({
+    verification: { ...callData.verification, answer, answeredAt: Date.now() },
+    state: 'scam',
+    outcome: 'scam',
+    endedAt: Date.now(),
+  });
+  // 04-FIX ("'No' must hang up"): forceEndCall() is the DIRECT hang-up path -- it calls
+  // Twilio's REST call-control API itself, independent of whatever the ElevenLabs agent
+  // thinks it's doing. If a call doc has no providerCallId (a simulated/demo call, or a
+  // real call whose personalization webhook doc was never adopted -- see
+  // elevenlabsCustomLlm.ts's Tier 3 fallback), there is no real Twilio call leg to hang
+  // up here at all -- the ONLY way that call actually ends is runTurn()'s own
+  // endCall:true/end_call-tool backstop on the next caller turn (see the "verdict
+  // finality" fix above). Log loudly so a missing providerCallId on a call that SHOULD
+  // have one (a real phone call) is never silently swallowed.
+  if (callData.providerCallId) {
+    await forceEndCall(callData.providerCallId, "I'm sorry, but this call has been identified as a scam and is being ended now.");
+  } else {
+    console.warn(
+      "answerVerification: no providerCallId on call doc -- cannot directly hang up the Twilio call leg; relying on runTurn()/elevenlabsCustomLlm.ts's end_call fallback on the next caller turn",
+      { callId, ...log },
+    );
+  }
+}
+
 const AnswerVerificationInput = z.object({
   callId: z.string().min(1),
   memberId: z.string().min(1),
@@ -102,29 +140,7 @@ export const answerVerification = onCall(
     }
 
     if (answer !== 'yes') {
-      await callRef.update({
-        verification: { ...callData.verification, answer, answeredAt: Date.now() },
-        state: 'scam',
-        outcome: 'scam',
-        endedAt: Date.now(),
-      });
-      // 04-FIX ("'No' must hang up"): forceEndCall() is the DIRECT hang-up path -- it calls
-      // Twilio's REST call-control API itself, independent of whatever the ElevenLabs agent
-      // thinks it's doing. If a call doc has no providerCallId (a simulated/demo call, or a
-      // real call whose personalization webhook doc was never adopted -- see
-      // elevenlabsCustomLlm.ts's Tier 3 fallback), there is no real Twilio call leg to hang
-      // up here at all -- the ONLY way that call actually ends is runTurn()'s own
-      // endCall:true/end_call-tool backstop on the next caller turn (see the "verdict
-      // finality" fix above). Log loudly so a missing providerCallId on a call that SHOULD
-      // have one (a real phone call) is never silently swallowed.
-      if (callData.providerCallId) {
-        await forceEndCall(callData.providerCallId, "I'm sorry, but this call has been identified as a scam and is being ended now.");
-      } else {
-        console.warn(
-          'answerVerification: no providerCallId on call doc -- cannot directly hang up the Twilio call leg; relying on runTurn()/elevenlabsCustomLlm.ts\'s end_call fallback on the next caller turn',
-          { callId, memberId },
-        );
-      }
+      await applyNoOrTimeoutVerdict(callId, callData, answer, { memberId });
       return { verified: false };
     }
 
@@ -184,5 +200,37 @@ export const answerVerification = onCall(
     await releaseCall(callId);
 
     return { verified: true };
+  },
+);
+
+/** 06-I: the phone's own countdown is 20s; the server backstop waits a little longer. */
+export const VERIFY_EXPIRE_MS = 25_000;
+
+const ExpireVerificationInput = z.object({ callId: z.string().min(1) });
+
+/**
+ * 06-I server-side backstop for the VER timeout. The 20s countdown lives only in the /verify
+ * phone's browser, so with that phone locked/closed a call would sit on VERIFYING forever.
+ * /stage (and /sim) call this once per callId when they see a verifying call past
+ * promptedAt + 25s. No token needed: it can only ever apply the SAME outcome the phone's own
+ * 'timeout' answer would, and only when the SERVER's record says it is due -- still
+ * `verifying`, unanswered, and prompted >= 25s ago. Anything else is an idempotent no-op.
+ */
+export const expireVerification = onCall(
+  { region: REGION, cors: true, maxInstances: 5, secrets: [twilioAccountSid, twilioAuthToken] },
+  async (req) => {
+    const { callId } = ExpireVerificationInput.parse(req.data);
+    const snap = await getFirestore().doc(`calls/${callId}`).get();
+    if (!snap.exists) return { expired: false, reason: 'not-found' };
+    const callData = snap.data() as CallDoc;
+    if (callData.verification?.answer) return { expired: false, reason: 'already-answered' };
+    if (callData.state !== 'verifying') return { expired: false, reason: 'not-verifying' };
+    const promptedAt = callData.verification?.promptedAt ?? callData.risk?.updatedAt ?? callData.startedAt;
+    if (!promptedAt || Date.now() - promptedAt < VERIFY_EXPIRE_MS) return { expired: false, reason: 'too-early' };
+    await applyNoOrTimeoutVerdict(callId, callData, 'timeout', {
+      memberId: callData.verification?.memberId,
+      via: 'expireVerification',
+    });
+    return { expired: true };
   },
 );
