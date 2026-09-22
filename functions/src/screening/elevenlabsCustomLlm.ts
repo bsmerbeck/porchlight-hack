@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { onRequest } from 'firebase-functions/https';
+import { getFirestore, FieldValue, type Firestore } from 'firebase-admin/firestore';
 import { elevenLabsLlmToken, anthropicKey } from '../secrets.js';
 import { runTurn, DEMO_HOUSEHOLD_ID } from './runTurn.js';
 import { sseChunk, sseDone, sseToolCall } from './sse.js';
@@ -40,6 +41,39 @@ function hashCallSignature(firstUserMessage: string): string {
   return createHash('sha256').update(signature).digest('hex').slice(0, 16);
 }
 
+// 02-FIX2 (live-call bug, 2026-09-22 10:41 EDT): a real phone call produced a
+// `calls/{id}` doc from the personalization webhook (holding `providerCallId`/`from`,
+// zero turns) AND a SEPARATE `custom-llm-hash-...` doc from this handler's Tier-3
+// fallback (holding the transcript) -- two docs for one call, neither complete. Tier 3
+// is still correct for keeping every turn of a call on ONE doc when no dashboard wiring
+// carries `call_doc_id` through, but it should never manufacture a brand-new doc when the
+// personalization webhook's doc for THIS SAME call already exists. On the very first
+// caller turn (exactly one user message in messages[]), look for a just-created,
+// still-empty screening-state doc from the personalization webhook and adopt it instead
+// of minting a fresh hash doc -- then remember that mapping (`callKeys/{hashKey}`) so
+// every later turn of the same call (same hashKey) resolves back to the SAME adopted doc,
+// not the hash-id doc. Falls back to the hash doc unchanged when no such webhook doc can
+// be found (e.g. a non-Twilio/simulated channel, or the webhook write hasn't landed yet).
+const RECENT_WEBHOOK_DOC_WINDOW_MS = 180 * 1000;
+
+async function findRecentPersonalizationDoc(db: Firestore): Promise<string | undefined> {
+  // No `where()` equality/range filters here on purpose -- an orderBy-only query needs no
+  // composite index (Firestore auto-indexes every field for single-field queries), unlike
+  // combining an equality filter with an orderBy on a different field. Filtering
+  // provider/state/turns/staleness in code keeps this fallback path index-free.
+  const snap = await db.collection('calls').orderBy('startedAt', 'desc').limit(5).get();
+  const cutoff = Date.now() - RECENT_WEBHOOK_DOC_WINDOW_MS;
+  for (const doc of snap.docs) {
+    const data = doc.data() as { provider?: string; state?: string; turns?: unknown[]; startedAt?: number };
+    if (data.provider !== 'elevenlabs') continue;
+    if (data.state !== 'screening') continue;
+    if ((data.turns?.length ?? 0) !== 0) continue;
+    if (typeof data.startedAt !== 'number' || data.startedAt < cutoff) continue;
+    return doc.id;
+  }
+  return undefined;
+}
+
 type IncomingMessage = { role?: string; content?: unknown };
 type CustomLlmRequestBody = {
   messages?: IncomingMessage[];
@@ -71,8 +105,10 @@ function isAuthorized(req: { get(name: string): string | undefined }, expected: 
 // `elevenlabs_extra_body` (Tier 1) or a dashboard-templated system message (Tier 2) --
 // both require dashboard configuration this endpoint cannot verify or control. Tier 3 is
 // the code-only fallback: a hash of the conversation's first user message (+ time
-// bucket), stable across every turn and every retry of the same logical call.
-function extractCallId(body: CustomLlmRequestBody): string | undefined {
+// bucket), stable across every turn and every retry of the same logical call -- adopting
+// the personalization webhook's own doc on the first turn when one is available (02-FIX2)
+// so the transcript and the Twilio CallSid/`from` end up on the SAME doc.
+async function extractCallId(body: CustomLlmRequestBody, db: Firestore): Promise<string | undefined> {
   const fromExtraBody = body.elevenlabs_extra_body?.call_doc_id;
   if (typeof fromExtraBody === 'string' && fromExtraBody.length > 0) {
     return fromExtraBody;
@@ -88,14 +124,34 @@ function extractCallId(body: CustomLlmRequestBody): string | undefined {
   const firstUserMessage = body.messages?.find(
     (m): m is IncomingMessage & { content: string } => m.role === 'user' && typeof m.content === 'string' && m.content.trim().length > 0,
   );
-  if (firstUserMessage) {
-    return `custom-llm-hash-${hashCallSignature(firstUserMessage.content)}`;
+  if (!firstUserMessage) {
+    console.warn(
+      'elevenlabsCustomLlm: could not find call_doc_id via elevenlabs_extra_body, the system message, or any user message to hash; falling back to a fresh call doc',
+    );
+    return undefined;
   }
 
-  console.warn(
-    'elevenlabsCustomLlm: could not find call_doc_id via elevenlabs_extra_body, the system message, or any user message to hash; falling back to a fresh call doc',
-  );
-  return undefined;
+  const hashKey = hashCallSignature(firstUserMessage.content);
+
+  // Every turn of the same logical call hashes to the same `hashKey` -- once turn 1 has
+  // adopted (or minted) a doc for this hashKey, every later turn must resolve back to the
+  // SAME doc id, so the mapping is checked (and persisted) in a dedicated `callKeys`
+  // collection keyed by hashKey, independent of which doc id it points to.
+  const keyRef = db.collection('callKeys').doc(hashKey);
+  const keySnap = await keyRef.get();
+  const mappedCallId = keySnap.exists ? (keySnap.data()?.callId as string | undefined) : undefined;
+  if (mappedCallId) return mappedCallId;
+
+  const userMessageCount = (body.messages ?? []).filter((m) => m.role === 'user').length;
+  if (userMessageCount === 1) {
+    const adopted = await findRecentPersonalizationDoc(db);
+    if (adopted) {
+      await keyRef.set({ callId: adopted, createdAt: FieldValue.serverTimestamp() });
+      return adopted;
+    }
+  }
+
+  return `custom-llm-hash-${hashKey}`;
 }
 
 function extractCallerText(body: CustomLlmRequestBody): string {
@@ -141,7 +197,7 @@ export const elevenlabsCustomLlm = onRequest(
     }
 
     const body = (req.body ?? {}) as CustomLlmRequestBody;
-    const callId = extractCallId(body) ?? `custom-llm-${Date.now()}`;
+    const callId = (await extractCallId(body, getFirestore())) ?? `custom-llm-${Date.now()}`;
     const callerText = extractCallerText(body);
 
     res.setHeader('Content-Type', 'text/event-stream');

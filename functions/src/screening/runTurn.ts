@@ -34,7 +34,27 @@ function fallbackTurn(previousRisk: { score: number; tactics: Tactic[] } | undef
 // line Claude generated under the assumption it was ending the call. Only used when the
 // override actually changes the action (see below); if Claude already said 'verify' on
 // its own, its own reply is kept as-is.
-const FAMILY_VERIFY_REPLY = "One moment, I'm checking with the family.";
+// 02-FIX2 (live-call bug, 2026-09-22 10:41 EDT): reworded -- the transcript showed the
+// screener promising "let me get her on the phone so you two can talk... hold on just a
+// moment for Margaret", which is wrong on two counts: verification happens through the
+// family's app, not by fetching Margaret to the phone, and this line must never sound
+// like the screener is about to hand the call over.
+const FAMILY_VERIFY_REPLY = "One moment — I'm checking with your family right now.";
+
+// 02-FIX2: once a call has already reached state:verifying (a family member has been
+// claimed and the call is on hold pending a real family member's tap-to-confirm/deny in
+// the app), every further caller turn gets this same short canned line instead of
+// re-invoking Claude. Re-running Claude on every subsequent turn while "verifying" is
+// exactly what produced the "let me get her on the phone" freelancing above -- once the
+// call is on hold, there is nothing more for the model to decide.
+const STILL_CHECKING_REPLY = 'Still checking, please hold.';
+
+// 02-FIX2: ElevenLabs occasionally re-sends the same caller utterance as a fresh HTTP
+// request (observed alongside a cold-start timeout on the live 2026-09-22 10:41 EDT
+// call) -- the caller's first line was appended TWICE, each time paired with a different
+// Claude-generated assistant reply. Treat a repeat of the exact same caller text within
+// this window as the same retried turn, not a new one.
+const IDEMPOTENT_RETRY_WINDOW_MS = 15 * 1000;
 
 export interface RunTurnOptions {
   callId: string;
@@ -77,7 +97,7 @@ export async function runTurn(opts: RunTurnOptions): Promise<RunTurnResult> {
   const callRef = db.doc(`calls/${opts.callId}`);
   const callSnap = await callRef.get();
   let callData = callSnap.data() as
-    | { turns?: CallTurn[]; risk?: { score: number; tactics: Tactic[] } }
+    | { turns?: CallTurn[]; risk?: { score: number; tactics: Tactic[] }; state?: string }
     | undefined;
   if (!callSnap.exists) {
     // D-05 schema — caller-side code (personalization webhook / startSimulatedCall) sets
@@ -95,6 +115,41 @@ export async function runTurn(opts: RunTurnOptions): Promise<RunTurnResult> {
   }
 
   const history = callData?.turns ?? [];
+
+  // 02-FIX2: idempotent turn append -- see IDEMPOTENT_RETRY_WINDOW_MS above. If the most
+  // recent CALLER turn already has this exact text and was written within the retry
+  // window, this is a resend of the same logical turn: skip the Claude call and the
+  // arrayUnion entirely, and just return what the caller was already told. This must run
+  // before the state:verifying short-circuit below, since a resent turn during
+  // "verifying" should also be treated as idempotent, not as new chatter to hold against.
+  const lastCallerTurn = [...history].reverse().find((t) => t.role === 'caller');
+  if (lastCallerTurn && lastCallerTurn.text === opts.callerText && Date.now() - lastCallerTurn.at < IDEMPOTENT_RETRY_WINDOW_MS) {
+    const lastAssistantTurn = [...history].reverse().find((t) => t.role === 'assistant');
+    const priorAction = (callData?.risk as { recommendedAction?: string } | undefined)?.recommendedAction;
+    return {
+      reply: lastAssistantTurn?.text ?? fallbackTurn(callData?.risk).reply,
+      endCall: priorAction === 'end',
+    };
+  }
+
+  // 02-FIX2 (live-call bug): once state:verifying is reached, never re-invoke Claude on
+  // further caller chatter -- the call is on hold pending a real family member's
+  // tap-to-confirm/deny in the app, and there is nothing left for the model to decide.
+  // Re-running Claude here is exactly what let the model freelance a wrong line ("let me
+  // get her on the phone... hold on just a moment for Margaret") on the live call this
+  // fixes. Just append the transcript turn and hold with the same canned reply.
+  if (callData?.state === 'verifying') {
+    const at1 = Date.now();
+    const at2 = at1 + 1;
+    await callRef.update({
+      turns: FieldValue.arrayUnion(
+        { role: 'caller', text: opts.callerText, at: at1 } satisfies CallTurn,
+        { role: 'assistant', text: STILL_CHECKING_REPLY, at: at2 } satisfies CallTurn,
+      ),
+    });
+    return { reply: STILL_CHECKING_REPLY, endCall: false };
+  }
+
   const messages = [
     ...history.map((t) => ({
       role: t.role === 'caller' ? ('user' as const) : ('assistant' as const),

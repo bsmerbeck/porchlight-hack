@@ -145,7 +145,14 @@ describe('runTurn', () => {
   // Claude's own turn-2 output recommended 'end' at a high risk score, exactly as it did
   // on the real call. The claimed identity must carry forward from turn 1 and force
   // 'verify' (never 'scam'/'end') on turn 2.
-  it('carries a claimed identity forward and forces state:verifying (never scam) when a later turn recommends end at high risk', async () => {
+  //
+  // 02-FIX2 update: turn 1 (the claim itself) is what actually transitions the call to
+  // state:verifying, using the FAMILY_VERIFY_REPLY hold line. A LIVE call then showed the
+  // model freelancing a wrong line ("let me get her on the phone... hold on just a moment
+  // for Margaret") when the caller kept talking on a later turn while already
+  // state:verifying -- so turn 2+ no longer re-invokes Claude at all once verifying;
+  // it just holds with the short STILL_CHECKING_REPLY line (see runTurn.ts).
+  it('carries a claimed identity forward and forces state:verifying (never scam) on the claim turn, then holds with a canned reply (never re-invoking Claude) while the caller keeps talking during verification', async () => {
     mockClaudeTurn({
       reply: 'Hi Brenden, what can I help with?',
       risk: 20,
@@ -153,15 +160,19 @@ describe('runTurn', () => {
       claimedIdentity: 'Brenden',
       recommendedAction: 'continue',
     });
-    mockClaudeTurn({
-      reply: "I'm sorry, but I can't help with that. Please take care.",
-      risk: 95,
-      tactics: ['urgency', 'secrecy', 'payment_method', 'authority_bail'],
-      claimedIdentity: null,
-      recommendedAction: 'end',
-    });
 
-    await runTurn({ callId: 'call-jail-brenden', householdId: DEMO_HOUSEHOLD_ID, callerText: "Hi grandma, it's me, Brenden." });
+    const firstResult = await runTurn({
+      callId: 'call-jail-brenden',
+      householdId: DEMO_HOUSEHOLD_ID,
+      callerText: "Hi grandma, it's me, Brenden.",
+    });
+    expect(firstResult.reply).toBe("One moment — I'm checking with your family right now.");
+    expect(mockParse).toHaveBeenCalledTimes(1);
+
+    // Turn 2: the caller keeps talking (delivers the jail/gift-card scam script) while the
+    // call is already state:verifying from turn 1. This must hold with the canned line and
+    // must NOT re-invoke Claude a second time -- the live bug this fixes was exactly this
+    // second Claude call producing a wrong, freelanced reply.
     const result = await runTurn({
       callId: 'call-jail-brenden',
       householdId: DEMO_HOUSEHOLD_ID,
@@ -169,16 +180,60 @@ describe('runTurn', () => {
     });
 
     expect(result.endCall).toBe(false);
-    const lastUpdate = fakeDb.__updateCalls.at(-1)!;
-    expect(lastUpdate.data.state).toBe('verifying');
-    expect(lastUpdate.data.state).not.toBe('scam');
-    expect((lastUpdate.data.verification as { memberId: string }).memberId).toBe('brenden');
-    expect((lastUpdate.data.risk as { claimedIdentity: string }).claimedIdentity).toBe('Brenden');
-    expect((lastUpdate.data.risk as { recommendedAction: string }).recommendedAction).toBe('verify');
-    // Claude's own turn-2 reply assumed the call was ending -- it must be replaced with
-    // the standard hold-for-verification line, never spoken as-is.
-    const doc = fakeDb.__docs.get('calls/call-jail-brenden') as { turns: Array<{ role: string; text: string }> };
-    expect(doc.turns.at(-1)!.text).toBe("One moment, I'm checking with the family.");
+    expect(result.reply).toBe('Still checking, please hold.');
+    expect(mockParse).toHaveBeenCalledTimes(1); // still just the one call, from turn 1
+
+    const doc = fakeDb.__docs.get('calls/call-jail-brenden') as {
+      state: string;
+      turns: Array<{ role: string; text: string }>;
+      verification: { memberId: string };
+      risk: { claimedIdentity: string; recommendedAction: string };
+    };
+    expect(doc.state).toBe('verifying');
+    expect(doc.state).not.toBe('scam');
+    expect(doc.verification.memberId).toBe('brenden');
+    expect(doc.risk.claimedIdentity).toBe('Brenden');
+    expect(doc.risk.recommendedAction).toBe('verify');
+    expect(doc.turns).toHaveLength(4);
+    expect(doc.turns.at(-1)!.text).toBe('Still checking, please hold.');
+    expect(doc.turns.at(-2)!.text).toBe('I need bail money in gift cards, do not tell mom.');
+  });
+
+  // 02-FIX2 regression test: ElevenLabs occasionally re-sends the same caller utterance as
+  // a fresh HTTP request (a live call showed the first caller line appended TWICE, each
+  // paired with a different Claude-generated reply, alongside a cold-start timeout). A
+  // repeat of the exact same caller text within the retry window must not append a
+  // duplicate turn or invoke Claude again -- it must just return what was already said.
+  it('treats a repeat of the same caller text within the retry window as an idempotent resend: no second Claude call, no duplicate turn append', async () => {
+    mockClaudeTurn({ reply: 'Who is calling, please?', risk: 5, recommendedAction: 'continue' });
+
+    const first = await runTurn({ callId: 'call-retry', householdId: DEMO_HOUSEHOLD_ID, callerText: 'hi' });
+    const second = await runTurn({ callId: 'call-retry', householdId: DEMO_HOUSEHOLD_ID, callerText: 'hi' });
+
+    expect(mockParse).toHaveBeenCalledTimes(1);
+    expect(second.reply).toBe(first.reply);
+    expect(second.endCall).toBe(false);
+    const doc = fakeDb.__docs.get('calls/call-retry') as { turns: unknown[] };
+    expect(doc.turns).toHaveLength(2);
+  });
+
+  it('does NOT treat a repeat of the same caller text as idempotent once the retry window has elapsed (real repeated statement, not a resend)', async () => {
+    mockClaudeTurn({ reply: 'Who is calling, please?', risk: 5, recommendedAction: 'continue' });
+    mockClaudeTurn({ reply: 'Could you tell me your name again?', risk: 10, recommendedAction: 'continue' });
+
+    await runTurn({ callId: 'call-slow-repeat', householdId: DEMO_HOUSEHOLD_ID, callerText: 'hello?' });
+    // Backdate the stored caller turn's timestamp past the 15s retry window so the second
+    // identical utterance is treated as a genuinely new turn, not a resend. The fake db's
+    // update() replaces the stored doc object on every write, so re-fetch after mutating
+    // rather than holding a reference across the second runTurn() call.
+    (fakeDb.__docs.get('calls/call-slow-repeat') as { turns: Array<{ role: string; at: number }> }).turns[0].at =
+      Date.now() - 20_000;
+
+    await runTurn({ callId: 'call-slow-repeat', householdId: DEMO_HOUSEHOLD_ID, callerText: 'hello?' });
+
+    expect(mockParse).toHaveBeenCalledTimes(2);
+    const doc = fakeDb.__docs.get('calls/call-slow-repeat') as { turns: unknown[] };
+    expect(doc.turns).toHaveLength(4);
   });
 
   it('does NOT override recommendedAction when a low-risk, unclaimed turn recommends end (downgrades to continue)', async () => {
@@ -234,6 +289,10 @@ describe('runTurn', () => {
     const lower = SYSTEM_PROMPT.toLowerCase();
     expect(lower).toContain('never reveal');
     expect(lower).toContain('never agree to a payment');
+    // 02-FIX2: added after a live call had the screener promise "let me get her on the
+    // phone... hold on just a moment for Margaret" -- must never happen again.
+    expect(lower).toContain('never say you will put margaret on the phone');
+    expect(lower).toContain("never confirm a caller's claimed identity");
   });
 
   it('never forwards caller/system-prompt text into any field beyond the locked write shape (prompt-injection guardrail)', async () => {
