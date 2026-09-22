@@ -84,6 +84,11 @@ export function lastActivity(c: ActivityLike): number {
   return Math.max(c.startedAt, c.risk?.updatedAt ?? 0, lastTurn, c.verification?.promptedAt ?? 0);
 }
 
+/** A screening/verifying call with no activity for > staleLiveMs (abandoned, never ended). */
+export function isStaleLive(c: StageCallLike, now: number, staleLiveMs: number = STALE_LIVE_MS): boolean {
+  return isLiveCall(c) && now - lastActivity(c as ActivityLike) >= staleLiveMs;
+}
+
 /** deriveStageState over the feed after dropping stale (abandoned) live calls. */
 export function deriveFreshStageState<T extends StageCallLike>(
   feedDocs: readonly T[],

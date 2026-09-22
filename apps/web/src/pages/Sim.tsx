@@ -21,6 +21,7 @@ import {
   StatusDot,
   Transcript,
   deriveFreshStageState,
+  isStaleLive,
   formatPhone,
   stateKey,
   type OperatorAction,
@@ -549,7 +550,7 @@ export default function Sim() {
                       </span>
                     </span>
                     <span className="tabular text-xs text-muted-foreground">{c.risk.score}</span>
-                    <OutcomeBadge outcome={c.outcome} state={c.state} size="sm" />
+                    <OutcomeBadge outcome={c.outcome} state={isStaleLive(c, now) ? 'ended' : c.state} size="sm" />
                   </li>
                 ))}
               </ul>

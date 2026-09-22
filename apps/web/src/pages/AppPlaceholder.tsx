@@ -12,6 +12,7 @@ import {
   TACTIC_META,
   Transcript,
   deriveFreshStageState,
+  isStaleLive,
   formatPhone,
   riskColor,
   stateKey,
@@ -209,7 +210,7 @@ function HistoryRow({
               <span className="text-[10px] uppercase tracking-wide text-muted-foreground">risk</span>
             </div>
           )}
-          <OutcomeBadge outcome={call.outcome} state={call.state} size="sm" />
+          <OutcomeBadge outcome={call.outcome} state={isStaleLive(call, now) ? 'ended' : call.state} size="sm" />
           <ChevronDown
             size={16}
             aria-hidden

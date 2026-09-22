@@ -25,6 +25,7 @@ export {
   deriveStageState,
   deriveFreshStageState,
   lastActivity,
+  isStaleLive,
   STALE_LIVE_MS,
   stateVisual,
   stateKey,

@@ -147,10 +147,10 @@ export function ArmedScreen({
           />
         }
       />
-      <div className="flex flex-1 flex-col items-center justify-center py-6">
+      <div className="flex flex-1 flex-col items-center justify-center py-4">
         <ReadyState
           size="phone"
-          lampSize="lg"
+          lampSize="md"
           title={`Watching for calls to ${PROTECTED_NAME}`}
           subtitle={`If a caller says they're ${memberName}, you'll be asked to confirm here.`}
         />
