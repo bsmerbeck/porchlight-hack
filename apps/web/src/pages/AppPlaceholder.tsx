@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { CallDoc, CallState, Tactic } from '@porchlight/shared';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { outcomeBadge, type OutcomeTone } from '@/lib/outcomeBadge';
 
 /**
  * DASH-01 family dashboard — `/app` (D-08's reserved route). Reads ONLY the public
@@ -22,6 +23,12 @@ const STATE_BADGE_VARIANT: Record<CallState, 'outline' | 'secondary' | 'destruct
   verified: 'default',
   scam: 'destructive',
   ended: 'outline',
+};
+
+const TONE_VARIANT: Record<OutcomeTone, 'default' | 'destructive' | 'secondary'> = {
+  success: 'default',
+  danger: 'destructive',
+  neutral: 'secondary',
 };
 
 function riskColor(score: number): string {
@@ -89,15 +96,28 @@ function LiveCallPanel({ call, isActive }: { call: FeedCall; isActive: boolean }
   );
 }
 
-function HistoryRow({ call }: { call: FeedCall }) {
+function HistoryRow({ call, expanded, onToggle }: { call: FeedCall; expanded: boolean; onToggle: () => void }) {
+  const badge = outcomeBadge(call.outcome);
   return (
-    <div className="flex items-center justify-between gap-4 rounded-lg px-4 py-3 ring-1 ring-foreground/10">
-      <div className="flex flex-col">
-        <span className="font-medium">{call.from}</span>
-        <span className="text-sm text-muted-foreground">{formatTime(call.startedAt)}</span>
-      </div>
-      {/* Outcome badge wired in Task 2 (outcomeBadge.ts) */}
-      <Badge variant="outline">{call.outcome ?? 'in progress'}</Badge>
+    <div className="rounded-lg ring-1 ring-foreground/10">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={expanded}
+        className="flex w-full items-center justify-between gap-4 px-4 py-3 text-left"
+      >
+        <div className="flex flex-col">
+          <span className="font-medium">{call.from}</span>
+          <span className="text-sm text-muted-foreground">{formatTime(call.startedAt)}</span>
+        </div>
+        <Badge variant={TONE_VARIANT[badge.tone]}>{badge.label}</Badge>
+      </button>
+      {expanded && (
+        <div className="flex flex-col gap-4 border-t border-border px-4 py-3">
+          <Transcript turns={call.turns} />
+          <p className="text-sm text-muted-foreground">{call.report ? call.report : 'Report pending'}</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -105,6 +125,7 @@ function HistoryRow({ call }: { call: FeedCall }) {
 export default function AppPlaceholder() {
   const [calls, setCalls] = useState<FeedCall[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [expandedCallId, setExpandedCallId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -163,7 +184,12 @@ export default function AppPlaceholder() {
         <div className="flex flex-col gap-2">
           <h2 className="text-lg font-semibold">History</h2>
           {historyCalls.map((call) => (
-            <HistoryRow key={call.id} call={call} />
+            <HistoryRow
+              key={call.id}
+              call={call}
+              expanded={expandedCallId === call.id}
+              onToggle={() => setExpandedCallId((cur) => (cur === call.id ? null : call.id))}
+            />
           ))}
         </div>
       )}
