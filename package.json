@@ -15,7 +15,8 @@
     "deploy:web": "pnpm --filter @porchlight/web build && firebase deploy --only hosting",
     "lamp:bridge": "node bridge/index.mjs",
     "lamp:bridge:config": "node bridge/write-config.mjs",
-    "demo:reset": "node scripts/demo-reset.mjs"
+    "demo:reset": "node scripts/demo-reset.mjs",
+    "demo:attack": "node scripts/demo-attack.mjs"
   },
   "devDependencies": {
     "typescript": "6.0.3",

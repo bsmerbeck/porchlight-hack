@@ -14,6 +14,7 @@ import { startPasskeyRegistration, finishPasskeyRegistration } from './verificat
 import { startPasskeyAuthentication, answerVerification } from './verification/passkeyAuthentication.js';
 import { resetDemo } from './demo/resetDemo.js';
 import { writeFamilyReport } from './reports/writeFamilyReport.js';
+import { attackCall } from './attack/attackCall.js';
 
 initializeApp();
 
@@ -44,6 +45,10 @@ export { resetDemo };
 // Phase 5 (Plan 01): RISK-04 post-call plain-English family report. Owned by
 // functions/src/reports/writeFamilyReport.ts.
 export { writeFamilyReport };
+// Phase 5 (Plan 02): ATK-01/ATK-02 attack simulator -- DEMO_TOKEN-gated onCall that
+// places a real outbound call, in the consented cloned-voice "Attacker" agent, to the
+// hardcoded Porchlight number only. Owned by functions/src/attack/attackCall.ts.
+export { attackCall };
 
 export const joinWaitlist = onCall({ region: REGION, cors: true, maxInstances: 5 }, async (req) => {
   const parsed = WaitlistPayload.safeParse(req.data);
