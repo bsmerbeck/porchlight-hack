@@ -70,6 +70,14 @@ Scope = what the 3-minute demo and the traction slide need. Demo 9PM Tue 2026-09
 - [ ] **DEMO-04**: 5-slide deck: problem + numbers, live demo, how it works, traction (signups, quotes, pilot interest), market + ask
 - [x] **DEMO-05**: Browser-based call simulator can replay the scripted scam through the same pipeline if live telephony fails on stage
 
+### Polish (Phase 6)
+
+- [ ] **POL-01**: Unified visual system across all screens (type, color, spacing, motion, empty/loading states) that looks finished on projector and phone
+- [ ] **POL-02**: Every workflow (simulated, live blocked, live approved, known caller, message) has explicit before/during/after states on `/stage`, `/verify`, `/app` and auto-returns to a ready state after a verdict
+- [ ] **POL-03**: All screens are refresh-safe mid-call (state rebuilt from Firestore, no duplicate prompts, no stuck modals)
+- [ ] **POL-04**: One-tap operator reset (calls, prompts, lamp, Hue bulbs) reachable from the demo UI, token-gated
+- [ ] **POL-05**: Venue bring-up command discovers Pi, Hue Bridge, and all reachable bulbs, sets them idle, and reports a device table
+
 ## v2 Requirements
 
 Deferred. Tracked but not in this roadmap.
@@ -103,6 +111,11 @@ Deferred. Tracked but not in this roadmap.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
+| POL-01 | Phase 6 | Pending |
+| POL-02 | Phase 6 | Pending |
+| POL-03 | Phase 6 | Pending |
+| POL-04 | Phase 6 | Pending |
+| POL-05 | Phase 6 | Pending |
 | FND-01 | Phase 1 | Pending |
 | FND-02 | Phase 1 | Pending |
 | FND-03 | Phase 1 | Pending |
