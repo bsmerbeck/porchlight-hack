@@ -6,13 +6,14 @@ import { WaitlistPayload, CALL_STATES } from '@porchlight/shared';
 import { anthropicKey, twilioAccountSid, twilioAuthToken, elevenLabsKey } from './secrets.js';
 import { startSimulatedCall, simulateTurn } from './screening/simulateTurn.js';
 import { mirrorActiveCallToLamp } from './lamp.js';
+import { raiseFamilyAlert } from './alerts.js';
 
 initializeApp();
 
 const REGION = 'us-central1';
 
-// Phase 3 (Plan 02): Firestore -> lamp bridge. Owned by functions/src/lamp.ts.
-export { mirrorActiveCallToLamp };
+// Phase 3 (Plan 02): Firestore -> lamp bridge. Owned by functions/src/lamp.ts / alerts.ts.
+export { mirrorActiveCallToLamp, raiseFamilyAlert };
 
 // Declared in ./secrets.ts so screening modules can import the SecretParam objects
 // directly without a circular import through this file. Re-exported here so
