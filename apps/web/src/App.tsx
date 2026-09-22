@@ -1,14 +1,19 @@
-import { WaitlistForm } from '@/components/WaitlistForm';
-import { LiveCounter } from '@/components/LiveCounter';
+import Landing from '@/pages/Landing';
+import AppPlaceholder from '@/pages/AppPlaceholder';
+import Stage from '@/pages/Stage';
 
 function App() {
-  return (
-    <div className="mx-auto flex min-h-screen max-w-xl flex-col items-center justify-center gap-8 p-6 text-center">
-      <h1 className="text-4xl font-bold">Porchlight</h1>
-      <WaitlistForm />
-      <LiveCounter />
-    </div>
-  );
+  const pathname = window.location.pathname.replace(/\/$/, '') || '/';
+
+  if (pathname.startsWith('/app')) {
+    return <AppPlaceholder />;
+  }
+
+  if (pathname === '/stage') {
+    return <Stage />;
+  }
+
+  return <Landing />;
 }
 
 export default App;
