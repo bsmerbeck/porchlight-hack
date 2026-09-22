@@ -6,9 +6,32 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // collection, to look for a recent personalization-webhook doc to adopt on the first
 // turn, and the `callKeys` collection, to remember the hashKey -> adopted-doc mapping) --
 // this fake mirrors just enough of the Admin SDK surface for those two collections.
+// 05-ALLOWLIST: also adds `.doc('calls/{id}')` / `.doc('households/{id}')` support (the
+// known-caller first-turn check reads/updates a call doc directly by path, and falls
+// back to a household lookup) plus FieldValue.arrayUnion, mirroring runTurn.test.ts's
+// own fake arrayUnion semantics.
 const { mockRunTurn, fakeDb, resetFakeDb, fieldValueMock } = vi.hoisted(() => {
+  function makeArrayUnion(...items: unknown[]) {
+    return { __arrayUnion: items };
+  }
+
   const callsDocs = new Map<string, Record<string, unknown>>();
   const callKeysDocs = new Map<string, Record<string, unknown>>();
+  const householdDocs = new Map<string, Record<string, unknown>>();
+
+  function applyCallsUpdate(id: string, data: Record<string, unknown>) {
+    const existing = callsDocs.get(id) ?? {};
+    const merged: Record<string, unknown> = { ...existing };
+    for (const [key, value] of Object.entries(data)) {
+      if (value && typeof value === 'object' && '__arrayUnion' in (value as object)) {
+        const prev = (existing[key] as unknown[] | undefined) ?? [];
+        merged[key] = [...prev, ...(value as { __arrayUnion: unknown[] }).__arrayUnion];
+      } else {
+        merged[key] = value;
+      }
+    }
+    callsDocs.set(id, merged);
+  }
 
   const fakeDb = {
     collection(name: string) {
@@ -45,8 +68,32 @@ const { mockRunTurn, fakeDb, resetFakeDb, fieldValueMock } = vi.hoisted(() => {
       }
       throw new Error(`elevenlabsCustomLlm.test fakeDb: unexpected collection "${name}"`);
     },
+    doc(path: string) {
+      const [collectionName, id] = path.split('/');
+      if (collectionName === 'calls') {
+        return {
+          async get() {
+            const data = callsDocs.get(id);
+            return { exists: data !== undefined, data: () => data };
+          },
+          async update(data: Record<string, unknown>) {
+            applyCallsUpdate(id, data);
+          },
+        };
+      }
+      if (collectionName === 'households') {
+        return {
+          async get() {
+            const data = householdDocs.get(id);
+            return { exists: data !== undefined, data: () => data };
+          },
+        };
+      }
+      throw new Error(`elevenlabsCustomLlm.test fakeDb: unexpected doc path "${path}"`);
+    },
     __callsDocs: callsDocs,
     __callKeysDocs: callKeysDocs,
+    __householdDocs: householdDocs,
   };
 
   return {
@@ -55,8 +102,9 @@ const { mockRunTurn, fakeDb, resetFakeDb, fieldValueMock } = vi.hoisted(() => {
     resetFakeDb: () => {
       callsDocs.clear();
       callKeysDocs.clear();
+      householdDocs.clear();
     },
-    fieldValueMock: { serverTimestamp: () => '__SERVER_TIMESTAMP__' },
+    fieldValueMock: { serverTimestamp: () => '__SERVER_TIMESTAMP__', arrayUnion: makeArrayUnion },
   };
 });
 
@@ -435,6 +483,133 @@ describe('elevenlabsCustomLlm', () => {
     await elevenlabsCustomLlm(req as never, makeRes().res as never);
 
     expect(mockRunTurn.mock.calls[0][0].callId).toBe('personalization-doc-id');
+  });
+
+  // 05-ALLOWLIST Task 2: elevenlabsPersonalization.ts creates a call doc ALREADY
+  // state:'verified'/outcome:'known' for an allowlisted caller_id -- ElevenLabs' own
+  // first message is static in the dashboard, so this handler's first turn is the only
+  // hook that can personalize the greeting. It must speak the known-caller goodbye line
+  // via end_call and never invoke runTurn (there's no risk-scoring or family-verify hold
+  // for an already-known caller).
+  it('finalizes a known-caller doc (state:verified/outcome:known) on the first turn with a personalized end_call goodbye, without ever invoking runTurn', async () => {
+    fakeDb.__callsDocs.set('known-doc-1', {
+      householdId: 'demo',
+      provider: 'elevenlabs',
+      state: 'verified',
+      outcome: 'known',
+      turns: [],
+      startedAt: Date.now(),
+      verification: {
+        memberId: 'brenden-smerbeck',
+        method: 'allowlist',
+        answeredAt: Date.now(),
+        name: 'Brenden Smerbeck',
+      },
+    });
+
+    const req = makeReq({
+      headers: { Authorization: `Bearer ${TOKEN}` },
+      body: {
+        messages: [{ role: 'user', content: 'Hi Margaret, just calling to check in.' }],
+        elevenlabs_extra_body: { call_doc_id: 'known-doc-1' },
+      },
+    });
+    const helper = makeRes();
+
+    await elevenlabsCustomLlm(req as never, helper.res as never);
+
+    expect(mockRunTurn).not.toHaveBeenCalled();
+    expect(helper.body).toContain('"end_call"');
+
+    const dataLines = helper.body
+      .split('\n\n')
+      .filter((l) => l.startsWith('data: ') && l !== 'data: [DONE]')
+      .map((l) => JSON.parse(l.slice('data: '.length)));
+    const toolCallLine = dataLines.find((payload) => payload.choices?.[0]?.delta?.tool_calls);
+    const args = JSON.parse(toolCallLine.choices[0].delta.tool_calls[0].function.arguments);
+    expect(args.message).toBe("Hi Brenden, Margaret's family knows you — I'll let her know you called. Goodbye for now.");
+
+    const doc = fakeDb.__callsDocs.get('known-doc-1') as {
+      turns: Array<{ role: string; text: string }>;
+      endedAt?: number;
+    };
+    expect(doc.turns).toHaveLength(2);
+    expect(doc.turns[0]).toMatchObject({ role: 'caller', text: 'Hi Margaret, just calling to check in.' });
+    expect(doc.turns[1]).toMatchObject({ role: 'assistant', text: args.message });
+    expect(typeof doc.endedAt).toBe('number');
+  });
+
+  it('falls back to deriving the first name from households/{id}.allowlist when verification.name is missing from the call doc', async () => {
+    fakeDb.__callsDocs.set('known-doc-2', {
+      provider: 'elevenlabs',
+      state: 'verified',
+      outcome: 'known',
+      turns: [],
+      startedAt: Date.now(),
+      verification: { memberId: 'brenden-smerbeck', method: 'allowlist' },
+    });
+    fakeDb.__householdDocs.set('demo', {
+      allowlist: [{ number: '+14014979735', name: 'Brenden Smerbeck', relation: 'grandson' }],
+    });
+
+    const req = makeReq({
+      headers: { Authorization: `Bearer ${TOKEN}` },
+      body: { messages: [{ role: 'user', content: 'hi' }], elevenlabs_extra_body: { call_doc_id: 'known-doc-2' } },
+    });
+    const helper = makeRes();
+
+    await elevenlabsCustomLlm(req as never, helper.res as never);
+
+    expect(helper.body).toContain('Hi Brenden,');
+  });
+
+  it('adopts a fresh state:verified/zero-turn webhook doc (allowlist match) via the Tier 3 adoption scan just like a screening-state doc', async () => {
+    fakeDb.__callsDocs.set('webhook-known', {
+      provider: 'elevenlabs',
+      state: 'verified',
+      outcome: 'known',
+      turns: [],
+      startedAt: Date.now(),
+      verification: { memberId: 'brenden-smerbeck', method: 'allowlist', name: 'Brenden Smerbeck' },
+    });
+
+    const req = makeReq({
+      headers: { Authorization: `Bearer ${TOKEN}` },
+      body: { messages: [{ role: 'user', content: 'hey there' }] },
+    });
+    const helper = makeRes();
+
+    await elevenlabsCustomLlm(req as never, helper.res as never);
+
+    expect(mockRunTurn).not.toHaveBeenCalled();
+    expect(helper.body).toContain('"end_call"');
+    const doc = fakeDb.__callsDocs.get('webhook-known') as { turns: unknown[] };
+    expect(doc.turns).toHaveLength(2);
+  });
+
+  it('does NOT re-trigger the known-caller finalize once endedAt is already set (falls through to runTurn instead)', async () => {
+    fakeDb.__callsDocs.set('known-doc-ended', {
+      provider: 'elevenlabs',
+      state: 'verified',
+      outcome: 'known',
+      turns: [
+        { role: 'caller', text: 'hi', at: Date.now() },
+        { role: 'assistant', text: 'goodbye', at: Date.now() },
+      ],
+      endedAt: Date.now(),
+      startedAt: Date.now(),
+      verification: { memberId: 'brenden-smerbeck', method: 'allowlist', name: 'Brenden Smerbeck' },
+    });
+
+    mockRunTurn.mockResolvedValueOnce({ reply: 'ok', endCall: false });
+    const req = makeReq({
+      headers: { Authorization: `Bearer ${TOKEN}` },
+      body: { messages: [{ role: 'user', content: 'still there?' }], elevenlabs_extra_body: { call_doc_id: 'known-doc-ended' } },
+    });
+
+    await elevenlabsCustomLlm(req as never, makeRes().res as never);
+
+    expect(mockRunTurn).toHaveBeenCalledTimes(1);
   });
 
   it('degrades to a complete, valid SSE stream with a generic fallback line when runTurn throws -- never a bare 500', async () => {

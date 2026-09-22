@@ -1,6 +1,7 @@
 import { onDocumentWritten } from 'firebase-functions/firestore';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import type { CallDoc, HouseholdDoc } from '@porchlight/shared';
+import { slugifyName } from '@porchlight/shared';
 import { verifyLinkSecret } from './secrets.js';
 import { mintVerifyToken } from './verification/verifyLink.js';
 
@@ -20,11 +21,21 @@ function firstToken(value: string | undefined | null): string | null {
 
 async function resolveName(after: CallDoc): Promise<string | null> {
   if (after.state === 'verified' && after.verification?.memberId) {
+    // 05-ALLOWLIST: an allowlist match already carries its own display name on the call
+    // doc (no household lookup needed) -- cheapest and most reliable path first.
+    if (after.verification.method === 'allowlist' && after.verification.name) {
+      return firstToken(after.verification.name);
+    }
     const householdSnap = await getFirestore().doc(`households/${after.householdId}`).get();
     const household = householdSnap.data() as HouseholdDoc | undefined;
     const member = household?.members?.find((m) => m.id === after.verification?.memberId);
     if (member) return firstToken(member.name);
-    // Member id didn't resolve (bad data) — fall through to the claimedIdentity fallback below
+    // 05-ALLOWLIST: member id didn't match a real household member -- it may be an
+    // allowlist entry's slug (older doc without verification.name stored). Resolve it
+    // the same way matchAllowlist.ts derives it, before falling through further.
+    const allowlistEntry = household?.allowlist?.find((a) => slugifyName(a.name) === after.verification?.memberId);
+    if (allowlistEntry) return firstToken(allowlistEntry.name);
+    // Neither resolved (bad data) — fall through to the claimedIdentity fallback below
     // so the Pi still shows *something* rather than nothing.
   }
   // screening | verifying | scam (and a verified call whose memberId didn't resolve): show the

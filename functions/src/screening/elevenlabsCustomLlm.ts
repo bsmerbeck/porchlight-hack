@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { onRequest } from 'firebase-functions/https';
 import { getFirestore, FieldValue, type Firestore } from 'firebase-admin/firestore';
+import type { AllowlistEntry, CallTurn } from '@porchlight/shared';
+import { slugifyName } from '@porchlight/shared';
 import { elevenLabsLlmToken, anthropicKey } from '../secrets.js';
 import { runTurn, DEMO_HOUSEHOLD_ID } from './runTurn.js';
 import { sseChunk, sseDone, sseToolCall } from './sse.js';
@@ -66,7 +68,10 @@ async function findRecentPersonalizationDoc(db: Firestore): Promise<string | und
   for (const doc of snap.docs) {
     const data = doc.data() as { provider?: string; state?: string; turns?: unknown[]; startedAt?: number };
     if (data.provider !== 'elevenlabs') continue;
-    if (data.state !== 'screening') continue;
+    // 05-ALLOWLIST: an allowlist-matched caller's webhook doc is created ALREADY
+    // state:'verified' (never 'screening') -- still zero turns and freshly created, so
+    // still adoptable on the first turn exactly like a normal screening-state doc.
+    if (data.state !== 'screening' && data.state !== 'verified') continue;
     if ((data.turns?.length ?? 0) !== 0) continue;
     if (typeof data.startedAt !== 'number' || data.startedAt < cutoff) continue;
     return doc.id;
@@ -154,6 +159,51 @@ async function extractCallId(body: CustomLlmRequestBody, db: Firestore): Promise
   return `custom-llm-hash-${hashKey}`;
 }
 
+// 05-ALLOWLIST Task 2: ElevenLabs' dashboard-configured first message is static, so it
+// cannot itself say a known caller's name -- this handler's very first turn is the only
+// hook available to personalize the greeting for a call the personalization webhook
+// already resolved to state:'verified'/outcome:'known'. True call-bridging to a real
+// family member is out of scope for tonight's demo (see the phase summary); this just
+// speaks a warm, honest line and ends the call.
+function knownCallerGoodbye(firstName: string): string {
+  return `Hi ${firstName}, Margaret's family knows you — I'll let her know you called. Goodbye for now.`;
+}
+
+async function maybeHandleKnownCaller(db: Firestore, callId: string, callerText: string): Promise<string | undefined> {
+  const ref = db.doc(`calls/${callId}`);
+  const snap = await ref.get();
+  if (!snap.exists) return undefined;
+
+  const data = snap.data() as
+    | { outcome?: string; endedAt?: number; verification?: { memberId?: string; name?: string } }
+    | undefined;
+  if (data?.outcome !== 'known' || data.endedAt) return undefined;
+
+  let firstName = data.verification?.name?.trim().split(/\s+/)[0];
+  if (!firstName) {
+    // Fallback if `verification.name` wasn't stored on the doc for some reason --
+    // re-derive it from the household's allowlist via the same memberId slug.
+    const householdSnap = await db.doc(`households/${DEMO_HOUSEHOLD_ID}`).get();
+    const allowlist = householdSnap.data()?.allowlist as AllowlistEntry[] | undefined;
+    const entry = allowlist?.find((a) => slugifyName(a.name) === data.verification?.memberId);
+    firstName = entry?.name.trim().split(/\s+/)[0];
+  }
+
+  const reply = knownCallerGoodbye(firstName ?? 'there');
+
+  const at1 = Date.now();
+  const at2 = at1 + 1;
+  await ref.update({
+    turns: FieldValue.arrayUnion(
+      { role: 'caller', text: callerText, at: at1 } satisfies CallTurn,
+      { role: 'assistant', text: reply, at: at2 } satisfies CallTurn,
+    ),
+    endedAt: Date.now(),
+  });
+
+  return reply;
+}
+
 function extractCallerText(body: CustomLlmRequestBody): string {
   const messages = body.messages ?? [];
   for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -196,8 +246,9 @@ export const elevenlabsCustomLlm = onRequest(
       return;
     }
 
+    const db = getFirestore();
     const body = (req.body ?? {}) as CustomLlmRequestBody;
-    const callId = (await extractCallId(body, getFirestore())) ?? `custom-llm-${Date.now()}`;
+    const callId = (await extractCallId(body, db)) ?? `custom-llm-${Date.now()}`;
     const callerText = extractCallerText(body);
 
     res.setHeader('Content-Type', 'text/event-stream');
@@ -205,6 +256,16 @@ export const elevenlabsCustomLlm = onRequest(
     res.setHeader('Connection', 'keep-alive');
 
     try {
+      const knownCallerReply = await maybeHandleKnownCaller(db, callId, callerText);
+      if (knownCallerReply !== undefined) {
+        // Single farewell only (02-FIX) -- spoken exclusively via the end_call tool's own
+        // `message` parameter, never also as a separate content chunk.
+        res.write(sseToolCall('end_call', { reason: 'known_caller', message: knownCallerReply }));
+        res.write(sseDone());
+        res.end();
+        return;
+      }
+
       const { reply, endCall } = await runTurn({ callId, householdId: DEMO_HOUSEHOLD_ID, callerText });
       if (endCall) {
         // Single farewell only -- see the 02-FIX doc comment above. `reply` is spoken
