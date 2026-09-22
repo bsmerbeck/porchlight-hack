@@ -9,6 +9,8 @@ const Sim = lazy(() => import('@/pages/Sim'));
 // Lazy-loaded: the member phone app pulls in Firebase + @simplewebauthn/browser, neither of
 // which should land in the landing page's default chunk.
 const Verify = lazy(() => import('@/pages/Verify'));
+// 06-A: design-system reference page (all porch components in every state).
+const Styleguide = lazy(() => import('@/pages/Styleguide'));
 
 function App() {
   const pathname = window.location.pathname.replace(/\/$/, '') || '/';
@@ -25,6 +27,14 @@ function App() {
     return (
       <Suspense fallback={null}>
         <Sim />
+      </Suspense>
+    );
+  }
+
+  if (pathname === '/styleguide') {
+    return (
+      <Suspense fallback={null}>
+        <Styleguide />
       </Suspense>
     );
   }
