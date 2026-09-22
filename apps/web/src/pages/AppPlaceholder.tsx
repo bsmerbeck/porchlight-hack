@@ -16,28 +16,47 @@ type FeedCall = CallDoc & { id: string };
 
 const ACTIVE_STATES = new Set<CallState>(['idle', 'screening', 'verifying']);
 
-const STATE_BADGE_VARIANT: Record<CallState, 'outline' | 'secondary' | 'destructive' | 'default'> = {
+// The Badge component (apps/web/src/components/ui/badge.tsx) has no native green/amber/blue
+// variant -- these are layered on top of the 'secondary' variant via className, same
+// convention as Verify.tsx's/Stage.tsx's own plain-Tailwind-palette one-off state colors.
+// 04-POLISH: kept in sync with Stage.tsx's bannerStyle palette so a call's color means the
+// same thing on the projector and in the family dashboard.
+const BADGE_TONE_CLASS = {
+  green: 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300',
+  amber: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
+  blue: 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300',
+} as const;
+
+// 04-POLISH: 'verified' used to render via the Badge's 'default' variant, which resolves to
+// the brand amber (--primary), not green -- inconsistent with Stage.tsx's green "VERIFIED"
+// banner. Now both surfaces agree: green for verified, amber for verifying, red (native
+// 'destructive' variant) for scam.
+const STATE_BADGE_VARIANT: Record<CallState, 'outline' | 'secondary' | 'destructive'> = {
   idle: 'outline',
   screening: 'outline',
   verifying: 'secondary',
-  verified: 'default',
+  verified: 'secondary',
   scam: 'destructive',
   ended: 'outline',
 };
 
+const STATE_BADGE_CLASS: Partial<Record<CallState, string>> = {
+  verifying: BADGE_TONE_CLASS.amber,
+  verified: BADGE_TONE_CLASS.green,
+};
+
 const TONE_VARIANT: Record<OutcomeTone, 'default' | 'destructive' | 'secondary'> = {
-  success: 'default',
+  success: 'secondary',
   danger: 'destructive',
   neutral: 'secondary',
   info: 'secondary',
 };
 
-// The Badge component (apps/web/src/components/ui/badge.tsx) has no native blue variant --
-// layered on top of the 'secondary' variant above rather than touching the shared design
-// system for one outcome. Matches Verify.tsx's own convention of a plain Tailwind palette
-// class for a one-off state color.
+// 04-POLISH: 'success' (verified/known) used to fall through to the 'default' Badge variant
+// (brand amber) with no override -- same Stage.tsx-vs-dashboard color mismatch as above.
 const TONE_CLASS: Partial<Record<OutcomeTone, string>> = {
-  info: 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300',
+  success: BADGE_TONE_CLASS.green,
+  info: BADGE_TONE_CLASS.blue,
 };
 
 function riskColor(score: number): string {
@@ -63,13 +82,29 @@ function Transcript({ turns }: { turns: CallDoc['turns'] }) {
   );
 }
 
+// Mirrors Stage.tsx's OUTCOME_STATE_LABEL override: 'known' keeps state:'verified' (green)
+// but shows its own label, and 'message' ends as state:'ended' but shows a distinct blue
+// label -- same outcome-aware naming, on both surfaces.
+function liveCallBadge(call: FeedCall): { label: string; variant: 'outline' | 'secondary' | 'destructive'; className?: string } {
+  if (call.outcome === 'known') {
+    return { label: 'Known caller', variant: 'secondary', className: BADGE_TONE_CLASS.green };
+  }
+  if (call.outcome === 'message') {
+    return { label: 'Message taken', variant: 'secondary', className: BADGE_TONE_CLASS.blue };
+  }
+  return { label: call.state, variant: STATE_BADGE_VARIANT[call.state], className: STATE_BADGE_CLASS[call.state] };
+}
+
 function LiveCallPanel({ call, isActive }: { call: FeedCall; isActive: boolean }) {
+  const badge = liveCallBadge(call);
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center justify-between">
           <span>{isActive ? 'Live call' : 'Most recent call'}</span>
-          <Badge variant={STATE_BADGE_VARIANT[call.state]}>{call.state}</Badge>
+          <Badge variant={badge.variant} className={badge.className}>
+            {badge.label}
+          </Badge>
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -185,6 +220,9 @@ export default function AppPlaceholder() {
 
   const activeCall = calls?.find((c) => ACTIVE_STATES.has(c.state)) ?? calls?.[0] ?? null;
   const isActive = activeCall ? ACTIVE_STATES.has(activeCall.state) : false;
+  // 04-POLISH (verified): `calls` is already ordered newest-first (orderBy('startedAt',
+  // 'desc') above) and .filter() preserves order, so history stays newest-first with no
+  // extra sort needed here.
   const historyCalls = calls ? (isActive ? calls.filter((c) => c.id !== activeCall?.id) : calls) : [];
 
   return (
