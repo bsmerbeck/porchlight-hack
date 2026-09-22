@@ -24,15 +24,15 @@ Scope = what the 3-minute demo and the traction slide need. Demo 9PM Tue 2026-09
 
 - [ ] **CALL-01**: Calling the Porchlight phone number is answered by the AI screener within ~2 rings with a short greeting on behalf of the senior ("Hi, this is Margaret's assistant, who's calling?")
 - [ ] **CALL-02**: Screener holds a natural multi-turn conversation: asks who is calling and why, never reveals personal details, never agrees to payments
-- [ ] **CALL-03**: Each caller/assistant turn is written to the call document within ~2s of being spoken, so the transcript streams live
+- [x] **CALL-03**: Each caller/assistant turn is written to the call document within ~2s of being spoken, so the transcript streams live
 - [ ] **CALL-04**: Backend can end the call programmatically (scam verdict) and can let it proceed (verified verdict) with an appropriate spoken line
-- [ ] **CALL-05**: Post-call, the full transcript and call metadata (from, duration, outcome) are persisted
+- [x] **CALL-05**: Post-call, the full transcript and call metadata (from, duration, outcome) are persisted
 
 ### Risk Scoring
 
-- [ ] **RISK-01**: Every caller turn triggers a Claude (`claude-haiku-4-5`) assessment returning structured JSON: `risk` 0-100, `tactics[]` (urgency, secrecy, payment method, authority/bail, impersonation), `claimed_identity`, `recommended_action`
-- [ ] **RISK-02**: Risk and tactics update on the call document in real time and drive the dashboard meter
-- [ ] **RISK-03**: When the caller claims to be a known family member, the system matches the claim to a household member and starts verification
+- [x] **RISK-01**: Every caller turn triggers a Claude (`claude-haiku-4-5`) assessment returning structured JSON: `risk` 0-100, `tactics[]` (urgency, secrecy, payment method, authority/bail, impersonation), `claimed_identity`, `recommended_action`
+- [x] **RISK-02**: Risk and tactics update on the call document in real time and drive the dashboard meter
+- [x] **RISK-03**: When the caller claims to be a known family member, the system matches the claim to a household member and starts verification
 - [ ] **RISK-04**: After the call, Claude (`claude-sonnet-5`) writes a plain-English family report: what the caller wanted, why it was flagged, what Porchlight did
 
 ### Family Verification
@@ -68,7 +68,7 @@ Scope = what the 3-minute demo and the traction slide need. Demo 9PM Tue 2026-09
 - [ ] **DEMO-02**: Full demo script runs end-to-end 3 times in a row without intervention, on venue Wi-Fi and on phone hotspot
 - [ ] **DEMO-03**: Recorded backup video of the full demo exists before 5PM
 - [ ] **DEMO-04**: 5-slide deck: problem + numbers, live demo, how it works, traction (signups, quotes, pilot interest), market + ask
-- [ ] **DEMO-05**: Browser-based call simulator can replay the scripted scam through the same pipeline if live telephony fails on stage
+- [x] **DEMO-05**: Browser-based call simulator can replay the scripted scam through the same pipeline if live telephony fails on stage
 
 ## v2 Requirements
 
@@ -112,12 +112,12 @@ Deferred. Tracked but not in this roadmap.
 | LAND-04 | Phase 1 | Pending |
 | CALL-01 | Phase 2 | Pending |
 | CALL-02 | Phase 2 | Pending |
-| CALL-03 | Phase 2 | Pending |
+| CALL-03 | Phase 2 | Complete (02-01) |
 | CALL-04 | Phase 2 | Pending |
-| CALL-05 | Phase 2 | Pending |
-| RISK-01 | Phase 2 | Pending |
-| RISK-02 | Phase 2 | Pending |
-| RISK-03 | Phase 2 | Pending |
+| CALL-05 | Phase 2 | Complete (02-01) |
+| RISK-01 | Phase 2 | Complete (02-01) |
+| RISK-02 | Phase 2 | Complete (02-01) |
+| RISK-03 | Phase 2 | Complete (02-01) |
 | RISK-04 | Phase 5 | Pending |
 | VER-01 | Phase 4 | Pending |
 | VER-02 | Phase 4 | Pending |
@@ -138,7 +138,7 @@ Deferred. Tracked but not in this roadmap.
 | DEMO-02 | Phase 5 | Pending |
 | DEMO-03 | Phase 5 | Pending |
 | DEMO-04 | Phase 5 | Pending |
-| DEMO-05 | Phase 2 | Pending |
+| DEMO-05 | Phase 2 | Complete (02-01) |
 
 **Coverage:**
 - v1 requirements: 36 total
