@@ -1,0 +1,13 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Public single-doc read for the live counter (no auth required; request.auth is null for anonymous web clients)
+    match /stats/waitlist {
+      allow get: if true;
+    }
+    // Everything else closed to clients; Admin SDK in Functions bypasses rules
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
