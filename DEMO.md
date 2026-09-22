@@ -21,6 +21,19 @@ If only one judge is available, they can hold both phones — the prop phone jus
 to visibly ring/be answered; the verification buzz happens on whichever phone has
 `/verify?member=brenden` open.
 
+## Arriving at the venue
+
+1. Plug in: Mac USB-ethernet dongle → switch → Pi + Hue Bridge. Power the Pi, the Hue Bridge,
+   and every Hue bulb you brought.
+2. `pnpm venue:up`. It finds the Pi and the Hue Bridge, updates the Hue IP if it changed,
+   lists every bulb, and sweeps everything blue, green, red, idle so you can see each device
+   respond. Wait for **GO**. On NO-GO, check power and the ethernet switch, then run it again.
+3. A bulb shows `OFF`? Power it on and re-run. It is brand new or was reset? Run
+   `pnpm venue:search` (40 s new-bulb search) with the bulb powered on.
+4. Start the bridge: `pnpm lamp:bridge` (restart it if venue:up said the Hue IP moved).
+   After every verdict the lamp and bulbs return to idle by themselves 20 s later.
+5. `pnpm demo:reset` wipes calls, prompts and alerts and sets the lamp to idle; screens show "Reset ✓".
+
 ## Before you start (once, at setup)
 
 1. `pnpm run lamp:bridge` in its own terminal tab. **Leave it running for the entire

@@ -81,6 +81,50 @@ Hue state is re-asserted on the same 20s heartbeat cadence as the Pi's `/state` 
 so a bulb that misses one request (Wi-Fi/LAN blip, Hue Bridge busy) re-syncs automatically on the
 next tick -- no separate watchdog needed on the Hue side.
 
+## Settle to ready (Phase 6, D-07)
+
+After a verdict (`verified`, `scam`, or `ended`) the bridge holds that colour for **20 s from
+`lamp/current.updatedAt`** (`bridge/settle.mjs`, `SETTLE_HOLD_MS`), then drives the Pi + every Hue
+bulb back to `idle` **locally**. Firestore is never written: `lamp/current` still says `scam`, and
+the web screens apply the same 20 s rule themselves (`deriveStageState`). Any new snapshot (a new
+call going to `screening`) cancels the timer. Heartbeats re-send the *effective* state, so once
+settled the heartbeat keeps the room idle. If the bridge starts up after a verdict that is already
+older than 20 s, it goes straight to idle. Unit tests: `node --test bridge/settle.test.mjs`.
+
+**Only one bridge at a time.** A pre-06-B bridge still running in another tab will re-send `scam`
+on its 20 s heartbeat and fight the settle. Restart the tab after pulling this change.
+
+## `status/bridge` heartbeat doc (Phase 6, D-12)
+
+Every heartbeat (20 s), on every lamp change, and when the room settles, the bridge writes:
+
+```
+status/bridge = {
+  piOk: boolean,          // Pi GET /health answered ok:true
+  piState: string | null, // Pi's current render state from /health (null if unreachable)
+  hueReachable: number,   // Hue bulbs with state.reachable (0 if Hue disabled/unreachable)
+  hueTotal: number,       // all bulbs known to the Hue Bridge
+  lastBeat: number,       // epoch ms (Mac clock) of this write
+  version: string         // "06-B"
+}
+```
+
+Anyone can `get` it. `firestore.rules` lets anyone write it, but only with exactly these keys
+and types (`lastBeat` must be a number). The bridge has no auth, so this is the accepted
+demo-grade risk: the worst case is a spoofed status row on the operator screen.
+"Bridge alive" = `Date.now() - lastBeat < ~45 s`.
+
+## Venue bring-up: `pnpm venue:up` (Phase 6, D-11)
+
+`scripts/venue-up.mjs` (stdlib only) finds the active link-local ethernet interface, the Pi
+(`169.254.10.2:8080`, then `smerbs.local:8080`), and the Hue Bridge (IP from `hue-local.json`,
+then mDNS `_hue._tcp`, then `discovery.meethue.com`). If the Hue Bridge moved, it rewrites the IP in
+`hue-local.json` and keeps the key. It lists every bulb with its reachable flag, then sweeps the Pi
+and all bulbs blue, green, red, idle (~5 s) so you can see each device respond. It ends with a
+device table and GO/NO-GO, and exits 1 if the Pi or the Hue Bridge is missing.
+`pnpm venue:search` first runs a 40 s Hue new-bulb search (`POST /lights`) and reports any new
+bulbs it finds. Restart the bridge if venue:up says the Hue IP changed.
+
 ## Running it
 
 ```bash
