@@ -4,16 +4,19 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import {
   getPairedMemberId,
+  isPasskeyEnrolled,
   recoverPairedMemberIdFromQuery,
   setPairedMemberId,
+  setPasskeyEnrolled,
 } from '@/lib/memberSession';
 import { computeSecondsLeft, hasExpired } from '@/lib/verifyCountdown';
 import * as webauthn from '@/lib/webauthn';
 
-// The single demo member this hackathon build ceremony enrolls/verifies — change this to
-// pair a different household member's phone. DEMO_HOUSEHOLD_ID is 'demo' (the only
-// household seeded in this build); the member id itself must match one of
-// households/demo.members[].id (functions/src/screening/runTurn.ts seeds 'brenden').
+// Default demo member this hackathon build's enroll screen targets when no `?member=` query
+// param pre-selects a different one (04-POLISH) — change this to pair a different household
+// member's phone by default. DEMO_HOUSEHOLD_ID is 'demo' (the only household seeded in this
+// build); the member id itself must match one of households/demo.members[].id
+// (functions/src/screening/runTurn.ts seeds 'brenden').
 const DEMO_MEMBER_ID = 'brenden';
 void DEMO_HOUSEHOLD_ID; // documents which household this member belongs to; no client read needed
 
@@ -94,6 +97,11 @@ function tryVibrate(): void {
  */
 export default function Verify() {
   const [memberId, setMemberId] = useState<string | null>(null);
+  // 04-POLISH: which member id the Enroll button targets. A `?member=` query param
+  // pre-selects this WITHOUT itself pairing/enrolling the phone (see memberSession.ts) —
+  // it only changes what "Enroll this phone" enrolls as, defaulting to DEMO_MEMBER_ID.
+  const [enrollTargetId, setEnrollTargetId] = useState<string>(DEMO_MEMBER_ID);
+  const [passkeyEnrolled, setPasskeyEnrolledState] = useState(false);
   const [enrollStatus, setEnrollStatus] = useState<EnrollStatus>('idle');
   const [enrollError, setEnrollError] = useState<string | null>(null);
 
@@ -112,8 +120,13 @@ export default function Verify() {
   const playedForCallIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    recoverPairedMemberIdFromQuery();
+    // 04-POLISH: a bare `?member=X` only pre-selects the enroll target -- it never pairs or
+    // enrolls the phone by itself (see memberSession.ts). Only `&paired=1` (the documented
+    // link-fallback escape hatch) or a real prior finishPasskeyRegistration bypasses Enroll.
+    const queryMemberId = recoverPairedMemberIdFromQuery();
+    if (queryMemberId) setEnrollTargetId(queryMemberId);
     setMemberId(getPairedMemberId());
+    setPasskeyEnrolledState(isPasskeyEnrolled());
   }, []);
 
   // VER-02: subscribe to this member's realtime prompt doc once paired.
@@ -276,14 +289,16 @@ export default function Verify() {
         { ok: boolean }
       >(fns, 'finishPasskeyRegistration');
 
-      const { data: optionsJSON } = await startPasskeyRegistration({ memberId: DEMO_MEMBER_ID });
+      const { data: optionsJSON } = await startPasskeyRegistration({ memberId: enrollTargetId });
       const response = await webauthn.startRegistration({
         optionsJSON: optionsJSON as Parameters<typeof webauthn.startRegistration>[0]['optionsJSON'],
       });
-      await finishPasskeyRegistration({ memberId: DEMO_MEMBER_ID, response });
+      await finishPasskeyRegistration({ memberId: enrollTargetId, response });
 
-      setPairedMemberId(DEMO_MEMBER_ID);
-      setMemberId(DEMO_MEMBER_ID);
+      setPairedMemberId(enrollTargetId);
+      setPasskeyEnrolled();
+      setMemberId(enrollTargetId);
+      setPasskeyEnrolledState(true);
       setEnrollStatus('idle');
     } catch (err) {
       console.error('Verify: passkey enrollment failed', err);
@@ -365,6 +380,9 @@ export default function Verify() {
     <div className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center gap-4 p-6 text-center">
       <h1 className="text-2xl font-bold">Armed — waiting for a call</h1>
       <p className="text-muted-foreground">This phone is paired and ready to confirm calls.</p>
+      <p className="text-xs text-muted-foreground">
+        {passkeyEnrolled ? 'Passkey: enrolled' : 'Passkey: not enrolled — using secure link'}
+      </p>
       {!alertsEnabled ? (
         <Button onClick={handleEnableAlerts} size="lg" variant="outline">
           Enable alerts
