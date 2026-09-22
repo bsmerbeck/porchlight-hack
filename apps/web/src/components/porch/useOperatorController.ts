@@ -221,9 +221,33 @@ export function useOperatorController(enabled = true): OperatorController {
     })();
   }, [say, soundboardOn, stopSoundboard]);
 
+  const lampRunning = useRef(false);
   const onLampTest = useCallback(() => {
+    // The on-screen cycle always runs, even if the physical sweep below is unavailable.
     window.dispatchEvent(new CustomEvent(LAMP_TEST_EVENT));
-    say('Lamp test: cycling on-screen lamp (physical sweep: pnpm venue:up)');
+    if (lampRunning.current) return say('Lamp test already running');
+    const token = getDemoToken();
+    if (!token) return say('Lamp test: on-screen only (no DEMO_TOKEN)');
+    lampRunning.current = true;
+    setBusy('lamp');
+    say('Lamp test: cycling on-screen lamp + physical lamp…');
+    void (async () => {
+      try {
+        // 06-H: lampTest cycles lamp/current; the Mac bridge mirrors it to the Pi + Hue.
+        const lampTest = await callable<{ token: string }, { steps: number }>('lampTest');
+        await lampTest({ token });
+        say('Lamp test done (screen + physical lamp)');
+      } catch (err) {
+        console.warn('OperatorBar: lampTest unavailable, on-screen only', err);
+        const code = (err as { code?: string } | null)?.code ?? '';
+        if (forgetTokenIfDenied(err)) say('Lamp test: on-screen only (wrong DEMO_TOKEN, cleared)');
+        else if (code.includes('failed-precondition')) say('Lamp test: on-screen only (a live call owns the lamp)');
+        else say('Lamp test: on-screen only (physical sweep unavailable, try pnpm venue:up)');
+      } finally {
+        lampRunning.current = false;
+        setBusy((b) => (b === 'lamp' ? null : b));
+      }
+    })();
   }, [say]);
 
   // Stop any clip on unmount.

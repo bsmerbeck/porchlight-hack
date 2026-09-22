@@ -23,6 +23,10 @@ export {
 } from './useOperatorController';
 export {
   deriveStageState,
+  deriveFreshStageState,
+  lastActivity,
+  isStaleLive,
+  STALE_LIVE_MS,
   stateVisual,
   stateKey,
   STATE_VISUALS,

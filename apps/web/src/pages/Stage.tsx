@@ -12,8 +12,7 @@ import {
   StateBanner,
   StatusDot,
   Transcript,
-  deriveStageState,
-  isLiveCall,
+  deriveFreshStageState,
   stateKey,
   terminalAt,
   RESULT_HOLD_MS,
@@ -33,14 +32,8 @@ type FeedCall = CallDoc & { id: string };
 
 const HOUSEHOLD_NAME = 'Margaret';
 /** A "live" doc with no activity for this long is a stale leftover, not a real call. */
-const STALE_LIVE_MS = 10 * 60_000;
 const LAMP_TEST_SEQUENCE: StateKey[] = ['screening', 'verifying', 'verified', 'scam', 'message', 'known', 'idle'];
 const LAMP_TEST_STEP_MS = 1400;
-
-function lastActivity(c: FeedCall): number {
-  const lastTurn = c.turns?.length ? c.turns[c.turns.length - 1].at : 0;
-  return Math.max(c.startedAt, c.risk?.updatedAt ?? 0, lastTurn, c.verification?.promptedAt ?? 0);
-}
 
 function useNow(intervalMs = 1000) {
   const [now, setNow] = useState(() => Date.now());
@@ -168,8 +161,7 @@ export default function Stage() {
   }, []);
 
   const view = useMemo(() => {
-    const fresh = (calls ?? []).filter((c) => !isLiveCall(c) || now - lastActivity(c) < STALE_LIVE_MS);
-    return deriveStageState(fresh, now);
+    return deriveFreshStageState(calls ?? [], now);
   }, [calls, now]);
 
   const call = view.call;

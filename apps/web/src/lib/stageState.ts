@@ -65,6 +65,40 @@ export function deriveStageState<T extends StageCallLike>(
   return { mode: 'ready' };
 }
 
+/**
+ * 06-H: a screening/verifying call with no activity for this long is treated as abandoned
+ * (e.g. the caller hung up before a verdict and the doc never reached `ended`), so it can
+ * never pin a surface on "Live call right now" forever. Shared by /stage, /app and /sim.
+ */
+export const STALE_LIVE_MS = 10 * 60_000;
+
+type ActivityLike = StageCallLike & {
+  turns?: ReadonlyArray<{ at: number }>;
+  risk?: { updatedAt?: number } | null;
+  verification?: { promptedAt?: number; answeredAt?: number } | null;
+};
+
+/** Latest activity timestamp on a call: start, last turn, last risk update, or prompt. */
+export function lastActivity(c: ActivityLike): number {
+  const lastTurn = c.turns?.length ? c.turns[c.turns.length - 1].at : 0;
+  return Math.max(c.startedAt, c.risk?.updatedAt ?? 0, lastTurn, c.verification?.promptedAt ?? 0);
+}
+
+/** A screening/verifying call with no activity for > staleLiveMs (abandoned, never ended). */
+export function isStaleLive(c: StageCallLike, now: number, staleLiveMs: number = STALE_LIVE_MS): boolean {
+  return isLiveCall(c) && now - lastActivity(c as ActivityLike) >= staleLiveMs;
+}
+
+/** deriveStageState over the feed after dropping stale (abandoned) live calls. */
+export function deriveFreshStageState<T extends StageCallLike>(
+  feedDocs: readonly T[],
+  now: number,
+  staleLiveMs: number = STALE_LIVE_MS,
+): StageState<T> {
+  const fresh = feedDocs.filter((c) => !isLiveCall(c) || now - lastActivity(c as ActivityLike) < staleLiveMs);
+  return deriveStageState(fresh, now);
+}
+
 /** D-02 visual keys. 'ended' = a plain hang-up/screened call (neutral amber). */
 export type StateKey =
   | 'idle'

@@ -11,7 +11,8 @@ import {
   StatusDot,
   TACTIC_META,
   Transcript,
-  deriveStageState,
+  deriveFreshStageState,
+  isStaleLive,
   formatPhone,
   riskColor,
   stateKey,
@@ -209,7 +210,7 @@ function HistoryRow({
               <span className="text-[10px] uppercase tracking-wide text-muted-foreground">risk</span>
             </div>
           )}
-          <OutcomeBadge outcome={call.outcome} state={call.state} size="sm" />
+          <OutcomeBadge outcome={call.outcome} state={isStaleLive(call, now) ? 'ended' : call.state} size="sm" />
           <ChevronDown
             size={16}
             aria-hidden
@@ -262,7 +263,7 @@ export default function AppPlaceholder() {
   const now = useNow();
   const [expandedCallId, setExpandedCallId] = useState<string | null>(null);
 
-  const stage = useMemo(() => deriveStageState(calls ?? [], now), [calls, now]);
+  const stage = useMemo(() => deriveFreshStageState(calls ?? [], now), [calls, now]);
   const current = stage.mode === 'ready' ? undefined : stage.call;
   const history = (calls ?? []).filter((c) => c.id !== current?.id);
 
