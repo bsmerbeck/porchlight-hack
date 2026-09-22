@@ -83,7 +83,8 @@ function mockClaudeTurn(turn: {
   risk: number;
   tactics?: string[];
   claimedIdentity?: string | null;
-  recommendedAction: 'continue' | 'verify' | 'end';
+  recommendedAction: 'continue' | 'verify' | 'end' | 'message';
+  message?: { text: string; callback: string | null } | null;
 }) {
   mockParse.mockResolvedValueOnce({
     parsed_output: {
@@ -92,6 +93,7 @@ function mockClaudeTurn(turn: {
       tactics: turn.tactics ?? [],
       claimedIdentity: turn.claimedIdentity ?? null,
       recommendedAction: turn.recommendedAction,
+      message: turn.message ?? null,
     },
   });
 }
@@ -148,11 +150,17 @@ describe('runTurn', () => {
   //
   // 02-FIX2 update: turn 1 (the claim itself) is what actually transitions the call to
   // state:verifying, using the FAMILY_VERIFY_REPLY hold line. A LIVE call then showed the
-  // model freelancing a wrong line ("let me get her on the phone... hold on just a moment
-  // for Margaret") when the caller kept talking on a later turn while already
-  // state:verifying -- so turn 2+ no longer re-invokes Claude at all once verifying;
-  // it just holds with the short STILL_CHECKING_REPLY line (see runTurn.ts).
-  it('carries a claimed identity forward and forces state:verifying (never scam) on the claim turn, then holds with a canned reply (never re-invoking Claude) while the caller keeps talking during verification', async () => {
+  // model freelancing a wrong SPOKEN line ("let me get her on the phone... hold on just a
+  // moment for Margaret") when the caller kept talking on a later turn while already
+  // state:verifying -- 02-FIX2 fixed this by removing Claude from the loop entirely once
+  // verifying.
+  //
+  // 05-ALLOWLIST Task 4 update: Claude is back in the loop on every turn while verifying,
+  // but SOLELY to refresh risk.score/risk.tactics for the live dashboard/stage view --
+  // its `reply` is never spoken (the caller always hears STILL_CHECKING_REPLY) and it can
+  // never move state away from 'verifying', so the exact freelancing bug 02-FIX2 fixed
+  // cannot recur even though Claude is invoked again.
+  it('carries a claimed identity forward and forces state:verifying (never scam) on the claim turn, then holds with a canned reply while still refreshing risk.score/tactics from Claude on later turns during verification', async () => {
     mockClaudeTurn({
       reply: 'Hi Brenden, what can I help with?',
       risk: 20,
@@ -170,9 +178,18 @@ describe('runTurn', () => {
     expect(mockParse).toHaveBeenCalledTimes(1);
 
     // Turn 2: the caller keeps talking (delivers the jail/gift-card scam script) while the
-    // call is already state:verifying from turn 1. This must hold with the canned line and
-    // must NOT re-invoke Claude a second time -- the live bug this fixes was exactly this
-    // second Claude call producing a wrong, freelanced reply.
+    // call is already state:verifying from turn 1. The caller must still hear the canned
+    // hold line and the call must stay state:verifying -- but Claude IS invoked again (a
+    // second mocked turn, with a much higher risk score) purely to refresh risk.score for
+    // whoever is watching the live dashboard/stage while the family verdict is pending.
+    mockClaudeTurn({
+      reply: "Hold on, let me get Margaret for you.", // must NEVER be spoken -- see assertions below
+      risk: 92,
+      tactics: ['impersonation', 'urgency', 'payment_method'],
+      claimedIdentity: 'Brenden',
+      recommendedAction: 'end', // must NEVER change state away from 'verifying'
+    });
+
     const result = await runTurn({
       callId: 'call-jail-brenden',
       householdId: DEMO_HOUSEHOLD_ID,
@@ -181,22 +198,31 @@ describe('runTurn', () => {
 
     expect(result.endCall).toBe(false);
     expect(result.reply).toBe('Still checking, please hold.');
-    expect(mockParse).toHaveBeenCalledTimes(1); // still just the one call, from turn 1
+    expect(mockParse).toHaveBeenCalledTimes(2); // Claude WAS invoked again, for scoring only
 
     const doc = fakeDb.__docs.get('calls/call-jail-brenden') as {
       state: string;
       turns: Array<{ role: string; text: string }>;
       verification: { memberId: string };
-      risk: { claimedIdentity: string; recommendedAction: string };
+      risk: { claimedIdentity: string; recommendedAction: string; score: number; tactics: string[] };
     };
     expect(doc.state).toBe('verifying');
     expect(doc.state).not.toBe('scam');
     expect(doc.verification.memberId).toBe('brenden');
     expect(doc.risk.claimedIdentity).toBe('Brenden');
+    // Locked at 'verify' even though the mocked turn 2 recommended 'end' -- state only
+    // ever changes via answerVerification, never via this scoring-only refresh.
     expect(doc.risk.recommendedAction).toBe('verify');
+    // The live risk score DID update from turn 2's mocked output (Task 4's whole point).
+    expect(doc.risk.score).toBe(92);
+    expect(doc.risk.tactics).toEqual(['impersonation', 'urgency', 'payment_method']);
     expect(doc.turns).toHaveLength(4);
     expect(doc.turns.at(-1)!.text).toBe('Still checking, please hold.');
     expect(doc.turns.at(-2)!.text).toBe('I need bail money in gift cards, do not tell mom.');
+    // Claude's turn-2 reply must never leak into the transcript or anywhere else.
+    for (const t of doc.turns) {
+      expect(t.text).not.toContain('let me get Margaret');
+    }
   });
 
   // 02-FIX2 regression test: ElevenLabs occasionally re-sends the same caller utterance as
@@ -279,10 +305,73 @@ describe('runTurn', () => {
     const result = await runTurn({ callId: 'call-end', householdId: DEMO_HOUSEHOLD_ID, callerText: 'send gift cards now' });
 
     expect(result.endCall).toBe(true);
+    expect(result.endReason).toBe('scam_detected');
     const lastUpdate = fakeDb.__updateCalls.at(-1)!;
     expect(lastUpdate.data.state).toBe('scam');
     expect(lastUpdate.data.outcome).toBe('scam');
     expect(lastUpdate.data.endedAt).toBeTypeOf('number');
+  });
+
+  // 05-ALLOWLIST Task 3: "take a message" for a benign, unknown caller. Claude keeps
+  // recommending 'message' while it gathers the content (message stays null) -- the call
+  // is NOT finalized/ended until a turn actually produces confirmed message content.
+  it('does NOT end the call while recommendedAction is message but no message content has been confirmed yet (still gathering)', async () => {
+    mockClaudeTurn({
+      reply: 'Sure, what would you like the message to say?',
+      risk: 5,
+      recommendedAction: 'message',
+      message: null,
+    });
+
+    const result = await runTurn({ callId: 'call-message-gathering', householdId: DEMO_HOUSEHOLD_ID, callerText: 'This is the pharmacy calling about a refill.' });
+
+    expect(result.endCall).toBe(false);
+    const lastUpdate = fakeDb.__updateCalls.at(-1)!;
+    expect(lastUpdate.data.state).toBeUndefined();
+    expect(lastUpdate.data.outcome).toBeUndefined();
+    expect((lastUpdate.data.risk as { recommendedAction: string }).recommendedAction).toBe('message');
+  });
+
+  it('finalizes state:ended/outcome:message and stores the confirmed message (with callback) in the SAME write once Claude produces message content', async () => {
+    mockClaudeTurn({
+      reply: "Got it -- I'll let Margaret know the pharmacy called about her refill, and that she can call back at 401-555-0100. Goodbye.",
+      risk: 5,
+      recommendedAction: 'message',
+      message: { text: "The pharmacy called about Margaret's prescription refill.", callback: '401-555-0100' },
+    });
+
+    const result = await runTurn({
+      callId: 'call-message-confirmed',
+      householdId: DEMO_HOUSEHOLD_ID,
+      callerText: "Yes, that's right, 401-555-0100.",
+    });
+
+    expect(result.endCall).toBe(true);
+    expect(result.endReason).toBe('message_taken');
+    const lastUpdate = fakeDb.__updateCalls.at(-1)!;
+    expect(lastUpdate.data.state).toBe('ended');
+    expect(lastUpdate.data.outcome).toBe('message');
+    expect(lastUpdate.data.endedAt).toBeTypeOf('number');
+    expect(lastUpdate.data.message).toEqual({
+      text: "The pharmacy called about Margaret's prescription refill.",
+      callback: '401-555-0100',
+    });
+  });
+
+  it('omits the callback key entirely (never writes it as null/undefined) when the caller left no callback number', async () => {
+    mockClaudeTurn({
+      reply: "Got it, I'll pass that along. Goodbye.",
+      risk: 5,
+      recommendedAction: 'message',
+      message: { text: 'A neighbor stopped by to say hello.', callback: null },
+    });
+
+    await runTurn({ callId: 'call-message-no-callback', householdId: DEMO_HOUSEHOLD_ID, callerText: 'No callback needed, just wanted to say hi.' });
+
+    const lastUpdate = fakeDb.__updateCalls.at(-1)!;
+    const message = lastUpdate.data.message as Record<string, unknown>;
+    expect(message.text).toBe('A neighbor stopped by to say hello.');
+    expect('callback' in message).toBe(false);
   });
 
   it('SYSTEM_PROMPT carries the required guardrail phrases', () => {
@@ -311,7 +400,7 @@ describe('runTurn', () => {
     });
 
     const lastUpdate = fakeDb.__updateCalls.at(-1)!;
-    const allowedKeys = new Set(['turns', 'risk', 'state', 'verification', 'outcome', 'endedAt']);
+    const allowedKeys = new Set(['turns', 'risk', 'state', 'verification', 'outcome', 'endedAt', 'message']);
     for (const key of Object.keys(lastUpdate.data)) {
       expect(allowedKeys.has(key)).toBe(true);
     }

@@ -29,6 +29,15 @@ const TONE_VARIANT: Record<OutcomeTone, 'default' | 'destructive' | 'secondary'>
   success: 'default',
   danger: 'destructive',
   neutral: 'secondary',
+  info: 'secondary',
+};
+
+// The Badge component (apps/web/src/components/ui/badge.tsx) has no native blue variant --
+// layered on top of the 'secondary' variant above rather than touching the shared design
+// system for one outcome. Matches Verify.tsx's own convention of a plain Tailwind palette
+// class for a one-off state color.
+const TONE_CLASS: Partial<Record<OutcomeTone, string>> = {
+  info: 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300',
 };
 
 function riskColor(score: number): string {
@@ -64,10 +73,18 @@ function LiveCallPanel({ call, isActive }: { call: FeedCall; isActive: boolean }
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
-        {call.risk.claimedIdentity && (
+        {call.outcome === 'known' && call.verification?.name ? (
+          // 05-ALLOWLIST: an allowlisted caller_id -- show the known name, not a "claims
+          // to be" line (nothing was claimed; it was resolved before the call even rang).
           <p className="text-sm text-muted-foreground">
-            Claims to be: <span className="font-medium text-foreground">{call.risk.claimedIdentity}</span>
+            Known caller: <span className="font-medium text-foreground">{call.verification.name}</span>
           </p>
+        ) : (
+          call.risk.claimedIdentity && (
+            <p className="text-sm text-muted-foreground">
+              Claims to be: <span className="font-medium text-foreground">{call.risk.claimedIdentity}</span>
+            </p>
+          )
         )}
         <div className="flex flex-col gap-1">
           <div className="flex items-center justify-between text-sm text-muted-foreground">
@@ -110,11 +127,20 @@ function HistoryRow({ call, expanded, onToggle }: { call: FeedCall; expanded: bo
           <span className="font-medium">{call.from}</span>
           <span className="text-sm text-muted-foreground">{formatTime(call.startedAt)}</span>
         </div>
-        <Badge variant={TONE_VARIANT[badge.tone]}>{badge.label}</Badge>
+        <Badge variant={TONE_VARIANT[badge.tone]} className={TONE_CLASS[badge.tone]}>
+          {badge.label}
+        </Badge>
       </button>
       {expanded && (
         <div className="flex flex-col gap-4 border-t border-border px-4 py-3">
           <Transcript turns={call.turns} />
+          {call.message && (
+            <p className="text-sm">
+              <span className="font-medium">Message: </span>
+              {call.message.text}
+              {call.message.callback && ` (callback: ${call.message.callback})`}
+            </p>
+          )}
           <p className="text-sm text-muted-foreground">{call.report ? call.report : 'Report pending'}</p>
         </div>
       )}

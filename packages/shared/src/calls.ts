@@ -14,7 +14,10 @@ export const CALL_TRANSITIONS: Record<CallState, readonly CallState[]> = {
 export const TACTICS = ['urgency', 'secrecy', 'payment_method', 'authority_bail', 'impersonation'] as const;
 export type Tactic = (typeof TACTICS)[number];
 
-export const RECOMMENDED_ACTIONS = ['continue', 'verify', 'end'] as const;
+// 'message' (05-ALLOWLIST): a benign, unknown caller with no family-member claim and a
+// legitimate low-risk reason to call -- the screener takes a message instead of holding
+// for family verification or ending as a scam.
+export const RECOMMENDED_ACTIONS = ['continue', 'verify', 'end', 'message'] as const;
 export const PROVIDERS = ['elevenlabs', 'simulator'] as const;
 
 export interface CallTurn {
@@ -36,16 +39,23 @@ export interface CallDoc {
     score: number;
     tactics: Tactic[];
     claimedIdentity?: string;
-    recommendedAction: 'continue' | 'verify' | 'end';
+    recommendedAction: 'continue' | 'verify' | 'end' | 'message';
     updatedAt: number;
   };
   verification?: {
     memberId: string;
-    promptedAt: number;
+    // Optional (not set by the allowlist pass-through path, which has no real
+    // "prompted, waiting for a tap" moment -- it resolves synchronously at ring time).
+    promptedAt?: number;
     answeredAt?: number;
     answer?: 'yes' | 'no' | 'timeout';
-    method?: 'passkey' | 'link';
+    method?: 'passkey' | 'link' | 'allowlist';
+    // Display name for an 'allowlist' match -- lets the dashboard/lamp show a friendly
+    // name without a second households/{id} read on the client.
+    name?: string;
   };
-  outcome?: 'verified' | 'scam' | 'screened';
+  outcome?: 'verified' | 'scam' | 'screened' | 'known' | 'message';
+  // Set once a 'message' outcome is finalized (05-ALLOWLIST Task 3).
+  message?: { text: string; callback?: string };
   report?: string;
 }
