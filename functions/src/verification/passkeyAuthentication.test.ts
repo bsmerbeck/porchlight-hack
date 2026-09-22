@@ -148,6 +148,36 @@ describe('answerVerification', () => {
     expect((doc.verification as { memberId: string }).memberId).toBe('brenden');
   });
 
+  // 04-FIX ("'No' must hang up"): when a call doc has no providerCallId (a simulated call,
+  // or a real call whose provenance was never adopted), forceEndCall has no real Twilio
+  // call leg to hang up -- confirm this degrades to a clear warning log instead of throwing
+  // or silently doing nothing, and the verdict is still recorded correctly.
+  it('answer:no with no providerCallId on the call doc logs a warning instead of calling forceEndCall, but still records the verdict', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    seedCall('call-no-provider', {
+      householdId: 'demo',
+      state: 'verifying',
+      verification: { memberId: 'brenden', promptedAt: 1000 },
+    });
+
+    const result = await answerVerification.run({
+      data: { callId: 'call-no-provider', memberId: 'brenden', answer: 'no' },
+    } as never);
+
+    expect(result).toEqual({ verified: false });
+    expect(mockForceEndCall).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('no providerCallId'),
+      expect.objectContaining({ callId: 'call-no-provider', memberId: 'brenden' }),
+    );
+
+    const doc = fakeDb.__docs.get('calls/call-no-provider') as Record<string, unknown>;
+    expect(doc.state).toBe('scam');
+    expect(doc.outcome).toBe('scam');
+
+    warnSpy.mockRestore();
+  });
+
   it('answer:timeout behaves identically to no', async () => {
     seedCall('call-timeout', {
       householdId: 'demo',

@@ -117,7 +117,11 @@ function LiveCallPanel({ call, isActive }: { call: FeedCall; isActive: boolean }
         ) : (
           call.risk.claimedIdentity && (
             <p className="text-sm text-muted-foreground">
-              Claims to be: <span className="font-medium text-foreground">{call.risk.claimedIdentity}</span>
+              {/* 04-FIX: once matchIdentity() resolves a real household member, show the
+                  correctly-spelled real name (verification.name) instead of the caller's raw
+                  ASR-transcribed claim (risk.claimedIdentity). */}
+              Claims to be:{' '}
+              <span className="font-medium text-foreground">{call.verification?.name ?? call.risk.claimedIdentity}</span>
             </p>
           )
         )}

@@ -106,7 +106,13 @@ export async function runTurn(opts: RunTurnOptions): Promise<RunTurnResult> {
   const callRef = db.doc(`calls/${opts.callId}`);
   const callSnap = await callRef.get();
   let callData = callSnap.data() as
-    | { turns?: CallTurn[]; risk?: { score: number; tactics: Tactic[] }; state?: string }
+    | {
+        turns?: CallTurn[];
+        risk?: { score: number; tactics: Tactic[] };
+        state?: string;
+        outcome?: string;
+        verification?: { answeredAt?: number; answer?: 'yes' | 'no' | 'timeout' };
+      }
     | undefined;
   if (!callSnap.exists) {
     // D-05 schema — caller-side code (personalization webhook / startSimulatedCall) sets
@@ -175,6 +181,74 @@ export async function runTurn(opts: RunTurnOptions): Promise<RunTurnResult> {
     }
   }
 
+  // 04-FIX (live-call bug, 2026-09-22 ~13:10 EDT): once a real verdict has landed --
+  // verification.answeredAt is set (the family tapped Yes/No, or the /verify countdown
+  // timed out), or the call has otherwise reached a terminal state -- a caller who keeps
+  // talking (frequently repeating the SAME claimed name that already matched a household
+  // member) must never be able to push the call doc back into state:'verifying'. The old
+  // code unconditionally forced effectiveAction:'verify' whenever matchIdentity() resolved
+  // a memberId, with no check for whether a verdict already existed -- so a scam caller who
+  // kept saying "it's Brenden" after the family tapped "No" flipped the call doc from
+  // state:'scam' right back to state:'verifying' on the very next turn, re-prompting the
+  // family's phone a second time for a call that had already been correctly blocked.
+  // Checking verification.answeredAt directly (not just callData.state) also covers the
+  // race window in answerVerification's 'yes' path, where verification.answeredAt is
+  // written in one update() and state:'verified' lands in a second, separate update() via
+  // releaseCall() immediately after.
+  const verificationInfo = callData?.verification;
+  const alreadyAnswered = Boolean(verificationInfo?.answeredAt);
+  const isScamFinal =
+    callData?.state === 'scam' || callData?.state === 'ended' || (alreadyAnswered && verificationInfo?.answer !== 'yes');
+  const isVerifiedFinal = callData?.state === 'verified' || (alreadyAnswered && verificationInfo?.answer === 'yes');
+
+  if (isScamFinal) {
+    // Deterministic, non-Claude reply -- never re-run matching/scoring on a call whose
+    // verdict is already final. The Custom LLM handler (elevenlabsCustomLlm.ts) turns
+    // endCall:true into the ElevenLabs end_call tool, which actually hangs up the live
+    // Twilio call leg (T-04's "'No' must hang up" requirement's backstop, alongside
+    // answerVerification's own direct forceEndCall()).
+    const goodbye = "I'm sorry, I can't help with that. Goodbye.";
+    const at1 = Date.now();
+    const at2 = at1 + 1;
+    await callRef.update({
+      turns: FieldValue.arrayUnion(
+        { role: 'caller', text: opts.callerText, at: at1 } satisfies CallTurn,
+        { role: 'assistant', text: goodbye, at: at2 } satisfies CallTurn,
+      ),
+    });
+    const endReason = callData?.outcome === 'message' ? 'message_taken' : 'scam_detected';
+    return { reply: goodbye, endCall: true, endReason };
+  }
+
+  if (isVerifiedFinal) {
+    // A verified call is being handed off to the family, not ended -- keep the risk score
+    // live for the dashboard (same rationale as the state:'verifying' hold below) but never
+    // re-run matchIdentity()/the verify transition once a real "yes" verdict exists.
+    const turn = await callClaude();
+    const at1 = Date.now();
+    const at2 = at1 + 1;
+    const priorClaimedIdentity = (callData?.risk as { claimedIdentity?: string } | undefined)?.claimedIdentity;
+    const priorRecommendedAction = (callData?.risk as { recommendedAction?: RiskTurn['recommendedAction'] } | undefined)
+      ?.recommendedAction;
+    const risk: Record<string, unknown> = {
+      score: turn.risk,
+      tactics: turn.tactics,
+      recommendedAction: priorRecommendedAction ?? 'continue',
+      updatedAt: FieldValue.serverTimestamp(),
+    };
+    if (priorClaimedIdentity) {
+      risk.claimedIdentity = priorClaimedIdentity;
+    }
+    await callRef.update({
+      turns: FieldValue.arrayUnion(
+        { role: 'caller', text: opts.callerText, at: at1 } satisfies CallTurn,
+        { role: 'assistant', text: turn.reply, at: at2 } satisfies CallTurn,
+      ),
+      risk,
+    });
+    return { reply: turn.reply, endCall: false };
+  }
+
   // 05-ALLOWLIST Task 4: once state:verifying is reached, Claude is called again on every
   // further caller turn -- SOLELY to keep risk.score/risk.tactics live for the
   // dashboard/stage view while the call is on hold -- but its `reply` is NEVER spoken and
@@ -225,9 +299,10 @@ export async function runTurn(opts: RunTurnOptions): Promise<RunTurnResult> {
   // the earlier claim when deciding whether to end the call.
   const priorClaimedIdentity = (callData?.risk as { claimedIdentity?: string } | undefined)?.claimedIdentity;
   const effectiveClaimedIdentity = turn.claimedIdentity ?? priorClaimedIdentity ?? null;
-  const memberId = effectiveClaimedIdentity
+  const memberMatch = effectiveClaimedIdentity
     ? await matchIdentity(opts.householdId, effectiveClaimedIdentity)
     : undefined;
+  const memberId = memberMatch?.memberId;
 
   // 02-FIX (policy): once a caller's claimed identity matches a real household member,
   // ALWAYS hold the call for family verification -- never let the AI end the call on its
@@ -293,7 +368,18 @@ export async function runTurn(opts: RunTurnOptions): Promise<RunTurnResult> {
 
   if (effectiveAction === 'verify' && memberId) {
     update.state = 'verifying';
-    update.verification = { memberId, promptedAt: Date.now() };
+    // 04-FIX: carry the matched household member's REAL name (e.g. "Brenden") alongside the
+    // caller's raw ASR-transcribed claim -- `claimedText` -- so prompts/{memberId}, the
+    // public feed, and lamp/current can all display the correctly-spelled name instead of
+    // echoing back whatever the speech-to-text pipeline happened to transcribe (e.g. the
+    // caller saying "Brendan" for a member actually named "Brenden"). Mirrors the
+    // `verification.name` field 05-ALLOWLIST already writes for allowlist matches.
+    update.verification = {
+      memberId,
+      promptedAt: Date.now(),
+      name: memberMatch?.name,
+      claimedText: effectiveClaimedIdentity,
+    };
   } else if (effectiveAction === 'end') {
     // CALL-05: the AI's own end recommendation persists endedAt/outcome in the SAME write —
     // no external hangup signal (Twilio/webhook) is required for this path.

@@ -108,8 +108,22 @@ export const answerVerification = onCall(
         outcome: 'scam',
         endedAt: Date.now(),
       });
+      // 04-FIX ("'No' must hang up"): forceEndCall() is the DIRECT hang-up path -- it calls
+      // Twilio's REST call-control API itself, independent of whatever the ElevenLabs agent
+      // thinks it's doing. If a call doc has no providerCallId (a simulated/demo call, or a
+      // real call whose personalization webhook doc was never adopted -- see
+      // elevenlabsCustomLlm.ts's Tier 3 fallback), there is no real Twilio call leg to hang
+      // up here at all -- the ONLY way that call actually ends is runTurn()'s own
+      // endCall:true/end_call-tool backstop on the next caller turn (see the "verdict
+      // finality" fix above). Log loudly so a missing providerCallId on a call that SHOULD
+      // have one (a real phone call) is never silently swallowed.
       if (callData.providerCallId) {
         await forceEndCall(callData.providerCallId, "I'm sorry, but this call has been identified as a scam and is being ended now.");
+      } else {
+        console.warn(
+          'answerVerification: no providerCallId on call doc -- cannot directly hang up the Twilio call leg; relying on runTurn()/elevenlabsCustomLlm.ts\'s end_call fallback on the next caller turn',
+          { callId, memberId },
+        );
       }
       return { verified: false };
     }

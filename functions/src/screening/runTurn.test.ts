@@ -142,6 +142,115 @@ describe('runTurn', () => {
     expect((lastUpdate.data.verification as { memberId: string }).memberId).toBe('brenden');
   });
 
+  // 04-FIX: the household member is seeded as name:'Brenden', but the live attack call had
+  // the caller say "Brendan" -- an ASR-transcribed misspelling that still matches the
+  // 'brenden' alias list. verification.name must carry the REAL matched name ("Brenden"),
+  // never the raw claim, while verification.claimedText preserves exactly what was said.
+  it("carries the matched household member's real name in verification.name, separate from the raw claimedText, even when the ASR spelling differs", async () => {
+    mockClaudeTurn({
+      reply: 'One sec.',
+      risk: 50,
+      tactics: ['impersonation'],
+      claimedIdentity: 'Brendan',
+      recommendedAction: 'verify',
+    });
+
+    await runTurn({ callId: 'call-name-mismatch', householdId: DEMO_HOUSEHOLD_ID, callerText: "It's Brendan" });
+
+    const doc = fakeDb.__docs.get('calls/call-name-mismatch') as {
+      verification: { memberId: string; name: string; claimedText: string };
+    };
+    expect(doc.verification.memberId).toBe('brenden');
+    expect(doc.verification.name).toBe('Brenden');
+    expect(doc.verification.claimedText).toBe('Brendan');
+  });
+
+  // 04-FIX regression test: a live attack call showed a family member correctly tap "No",
+  // moving the call to state:'scam' -- but the scammer kept talking, repeating the SAME
+  // claimed name that had already matched a household member. The old code unconditionally
+  // forced effectiveAction:'verify' whenever matchIdentity() resolved a memberId, with no
+  // check for an already-final verdict, flipping the call doc right back to
+  // state:'verifying' and re-prompting the family's phone for a call already blocked.
+  describe('verdict finality', () => {
+    it('never re-enters state:verifying once verification.answer is "no" -- replies with a fixed goodbye and reports endCall:true, without calling Claude again', async () => {
+      fakeDb.__docs.set('calls/call-final-no', {
+        householdId: DEMO_HOUSEHOLD_ID,
+        state: 'scam',
+        outcome: 'scam',
+        turns: [{ role: 'caller', text: "it's Brenden", at: Date.now() - 30_000 }],
+        risk: { score: 90, tactics: ['impersonation'], claimedIdentity: 'Brenden', recommendedAction: 'verify', updatedAt: 0 },
+        verification: { memberId: 'brenden', promptedAt: Date.now() - 25_000, answer: 'no', answeredAt: Date.now() - 20_000 },
+      });
+
+      const result = await runTurn({
+        callId: 'call-final-no',
+        householdId: DEMO_HOUSEHOLD_ID,
+        callerText: "No really, it's Brenden, I need help",
+      });
+
+      expect(result.endCall).toBe(true);
+      expect(result.endReason).toBe('scam_detected');
+      expect(result.reply).toBe("I'm sorry, I can't help with that. Goodbye.");
+      expect(mockParse).not.toHaveBeenCalled();
+
+      const doc = fakeDb.__docs.get('calls/call-final-no') as { state: string; verification: { memberId: string } };
+      expect(doc.state).toBe('scam');
+      expect(doc.verification.memberId).toBe('brenden');
+    });
+
+    it('never re-enters state:verifying once state is already "scam", even without a stored verification.answer', async () => {
+      fakeDb.__docs.set('calls/call-final-scam-state', {
+        householdId: DEMO_HOUSEHOLD_ID,
+        state: 'scam',
+        outcome: 'scam',
+        turns: [],
+        risk: { score: 90, tactics: [], claimedIdentity: 'Brenden', recommendedAction: 'end', updatedAt: 0 },
+      });
+
+      const result = await runTurn({
+        callId: 'call-final-scam-state',
+        householdId: DEMO_HOUSEHOLD_ID,
+        callerText: 'are you still there',
+      });
+
+      expect(result.endCall).toBe(true);
+      expect(mockParse).not.toHaveBeenCalled();
+      const doc = fakeDb.__docs.get('calls/call-final-scam-state') as { state: string };
+      expect(doc.state).toBe('scam');
+    });
+
+    it('replies normally and keeps scoring risk once verified, but never re-enters verification', async () => {
+      fakeDb.__docs.set('calls/call-final-verified', {
+        householdId: DEMO_HOUSEHOLD_ID,
+        state: 'verified',
+        outcome: 'verified',
+        turns: [],
+        risk: { score: 10, tactics: [], recommendedAction: 'continue', updatedAt: 0 },
+        verification: { memberId: 'brenden', promptedAt: Date.now() - 5000, answer: 'yes', answeredAt: Date.now() - 4000, method: 'passkey' },
+      });
+      mockClaudeTurn({ reply: 'Sure, one moment.', risk: 15, recommendedAction: 'continue' });
+
+      const result = await runTurn({
+        callId: 'call-final-verified',
+        householdId: DEMO_HOUSEHOLD_ID,
+        callerText: 'Hi, just checking on mom.',
+      });
+
+      expect(result.endCall).toBe(false);
+      expect(result.reply).toBe('Sure, one moment.');
+      expect(mockParse).toHaveBeenCalledTimes(1);
+
+      const doc = fakeDb.__docs.get('calls/call-final-verified') as {
+        state: string;
+        verification: { answer: string };
+        risk: { score: number };
+      };
+      expect(doc.state).toBe('verified');
+      expect(doc.verification.answer).toBe('yes');
+      expect(doc.risk.score).toBe(15);
+    });
+  });
+
   // 02-FIX regression test: the live bug this fixes was a caller saying "it's Brenden"
   // on turn 1, then delivering a scam script on turn 2 WITHOUT repeating the name --
   // Claude's own turn-2 output recommended 'end' at a high risk score, exactly as it did
