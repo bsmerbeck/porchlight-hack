@@ -92,6 +92,14 @@ export const resetDemo = onCall(
       promptsCleared++;
     }
 
+    // (2b) households/demo/alerts/* -- clear joystick/family alerts (Phase 6, D-10).
+    const alertsSnap = await db.collection('households/demo/alerts').get();
+    let alertsCleared = 0;
+    for (const doc of alertsSnap.docs) {
+      await doc.ref.delete();
+      alertsCleared++;
+    }
+
     // (3) lamp/current -- back to idle.
     await db.doc('lamp/current').set({ state: 'idle' });
 
@@ -107,6 +115,11 @@ export const resetDemo = onCall(
     });
     await householdRef.set({ ...DEMO_HOUSEHOLD_BASELINE, members });
 
-    return { callsDeleted, promptsCleared };
+    // (5) status/demo -- publicly readable "reset done" marker so screens can toast "Reset ✓"
+    // (Phase 6, D-10). Written LAST so a toast only appears once everything above succeeded.
+    const resetAt = Date.now();
+    await db.doc('status/demo').set({ resetAt });
+
+    return { callsDeleted, promptsCleared, alertsCleared, resetAt };
   },
 );

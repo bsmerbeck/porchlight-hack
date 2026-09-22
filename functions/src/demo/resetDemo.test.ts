@@ -97,6 +97,7 @@ describe('resetDemo', () => {
     await expect(resetDemo.run({ data: { token: 'wrong-token' } } as never)).rejects.toThrow(HttpsError);
 
     expect(getSpy).not.toHaveBeenCalled();
+    expect(fakeDb.__docs.has('status/demo')).toBe(false);
     expect(mockCallsUpdate).not.toHaveBeenCalled();
     // Untouched -- the junk doc is still there because the gate ran before any Firestore op.
     expect(fakeDb.__docs.has('calls/junk')).toBe(true);
@@ -112,6 +113,8 @@ describe('resetDemo', () => {
     seed('calls/ended-call', { state: 'scam', endedAt: 123 });
     seed('calls/kept-call', { state: 'screening' });
     seed('prompts/brenden', { state: 'verifying' });
+    seed('households/demo/alerts/a1', { kind: 'joystick' });
+    seed('households/demo/alerts/a2', { kind: 'joystick' });
     seed('lamp/current', { state: 'screening', callId: 'live-call' });
     seed('households/demo', {
       name: 'Demo household',
@@ -150,7 +153,13 @@ describe('resetDemo', () => {
       { id: 'cred-1', publicKey: 'pk', counter: 3, transports: [], deviceType: 'singleDevice', backedUp: false },
     ]);
 
-    expect(result).toEqual({ callsDeleted: 2, promptsCleared: 1 });
+    expect(fakeDb.__docs.has('households/demo/alerts/a1')).toBe(false);
+    expect(fakeDb.__docs.has('households/demo/alerts/a2')).toBe(false);
+    const status = fakeDb.__docs.get('status/demo') as { resetAt: number };
+    expect(typeof status.resetAt).toBe('number');
+    expect(Object.keys(status)).toEqual(['resetAt']);
+
+    expect(result).toEqual({ callsDeleted: 2, promptsCleared: 1, alertsCleared: 2, resetAt: status.resetAt });
   });
 
   it('never crashes when forceEndCall throws (stale/already-ended Twilio call) -- still deletes the doc', async () => {
@@ -168,6 +177,6 @@ describe('resetDemo', () => {
     const household = fakeDb.__docs.get('households/demo') as { members: Array<{ id: string; passkeys?: unknown[] }> };
     expect(household.members[0].id).toBe('brenden');
     expect(household.members[0].passkeys).toBeUndefined();
-    expect(result).toEqual({ callsDeleted: 0, promptsCleared: 0 });
+    expect(result).toMatchObject({ callsDeleted: 0, promptsCleared: 0, alertsCleared: 0 });
   });
 });
