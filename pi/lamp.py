@@ -264,7 +264,7 @@ ORIENTATION_SAMPLE_INTERVAL_SEC = 2.0
 # viewer needs rotation=180 for upright text. Used as the fresh-boot default
 # before any accelerometer reading or joystick/env override exists -- the
 # previous hardcoded 0 was wrong for this mounting.
-DEFAULT_ROTATION = 0
+DEFAULT_ROTATION = 180
 
 
 def _rotation_from_gravity(x, y, z):
