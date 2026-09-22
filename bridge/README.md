@@ -4,8 +4,35 @@ The Mac-side relay for the Porchlight lamp (Phase 3). Watches `lamp/current` in 
 (mirrored from `calls/{id}` by `functions/src/lamp.ts`'s `mirrorActiveCallToLamp`) and POSTs the
 resulting state to the Pi's `pi/lamp.py` HTTP service over the direct ethernet cable — **never
 over Wi-Fi** (CLAUDE.md network constraint). It also polls the Pi's `/joystick` endpoint every
-~500ms and turns a press into a `households/{id}/alerts` record via the `raiseFamilyAlert`
-callable (`functions/src/alerts.ts`).
+~500ms and turns a real CENTER-button press into a `households/{id}/alerts` record via the
+`raiseFamilyAlert` callable (`functions/src/alerts.ts`).
+
+## Heartbeat (03-FIX)
+
+The Pi's `pi/lamp.py` has a 60-second watchdog that reverts the lamp to `idle` if it hasn't
+received a `POST /state` in that window — this is the "the bridge died" safety net. Because the
+bridge previously only POSTed when `lamp/current` actually *changed* in Firestore, any call that
+sat in the same state for more than 60 seconds (e.g. `verified` while everyone chats) got
+silently reverted to `idle` on the Pi even though the bridge was alive and the Firestore
+document still correctly said `verified`.
+
+The bridge now re-POSTs the last known `lamp/current` state every 20 seconds — comfortably
+inside the 60s window — in addition to POSTing immediately on every real Firestore change
+(including the snapshot Firestore redelivers right after a reconnect). The watchdog now only
+ever fires when the bridge process itself is gone, not merely because nothing changed.
+
+## Joystick contract (03-FIX)
+
+`GET /joystick` returns `{"pressed": bool, "demoState": "<state>|null"}`:
+
+- **`pressed`** is a one-shot flag the Pi sets **only** on a real CENTER-button press and
+  clears on every read. Direction presses (up/down/left/right), which drive the Pi's local
+  demo-mode state cycle, never set this flag. The bridge treats `pressed === true` as the sole
+  trigger for `raiseFamilyAlert` — nothing else raises an alert. As defense in depth, the bridge
+  also enforces its own 5-second debounce client-side before calling the callable again.
+- **`demoState`** mirrors whatever state is currently active on the Pi (bridge-driven or
+  joystick-cycled). It's informational only — the bridge logs it when it changes, but never
+  writes it to Firestore and never lets it influence the alert decision.
 
 ## Running it
 

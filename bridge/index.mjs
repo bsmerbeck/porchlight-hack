@@ -29,6 +29,17 @@ const DEMO_HOUSEHOLD_ID = 'demo';
 
 const JOYSTICK_POLL_MS = 500;
 
+// Re-POST the last known lamp/current state on this cadence even when Firestore hasn't
+// changed it, so the Pi's 60s watchdog (pi/lamp.py) never mistakes "nothing changed" for
+// "the bridge died" (03-FIX). Comfortably inside the 60s window with margin for a missed
+// tick or two.
+const HEARTBEAT_MS = 20_000;
+
+// A physical CENTER-button press can only mean one family-alert request per press, but we
+// debounce client-side too as defense in depth against any double-read of the Pi's one-shot
+// `pressed` flag (03-FIX) -- e.g. two bridge instances briefly polling the same Pi.
+const ALERT_DEBOUNCE_MS = 5_000;
+
 // --- Firebase config loader --------------------------------------------------------------
 //
 // Reads the same gitignored `.env.local` convention apps/web already uses
@@ -86,50 +97,89 @@ const raiseFamilyAlert = httpsCallable(fns, 'raiseFamilyAlert');
 
 // --- State relay: lamp/current -> POST /state -------------------------------------------
 
-console.log(`[bridge] watching lamp/current -> POST ${PI_URL}/state`);
+console.log(`[bridge] watching lamp/current -> POST ${PI_URL}/state (heartbeat every ${HEARTBEAT_MS}ms)`);
+
+// The last lamp/current data this bridge has seen — re-sent on every heartbeat tick so the
+// Pi's watchdog only ever fires when the bridge process itself is gone, never merely because
+// lamp/current hasn't changed recently (03-FIX).
+let lastKnownState = null;
+
+async function postState(data, { heartbeat = false } = {}) {
+  try {
+    const res = await fetch(`${PI_URL}/state`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ state: data.state, name: data.name ?? undefined }),
+      signal: AbortSignal.timeout(2000),
+    });
+    if (!res.ok) {
+      console.error(`[bridge] Pi rejected /state POST: HTTP ${res.status}${heartbeat ? ' (heartbeat)' : ''}`);
+    } else if (!heartbeat) {
+      console.log(`[bridge] lamp -> ${data.state}${data.name ? ` (${data.name})` : ''}`);
+    }
+  } catch (err) {
+    // Pi unreachable this tick (cable unplugged, Pi rebooting, etc.) — the Pi's own 60s
+    // watchdog (pi/lamp.py) reverts to idle independently, so we just log and move on.
+    console.error(`[bridge] POST /state failed${heartbeat ? ' (heartbeat)' : ''}:`, err?.message ?? err);
+  }
+}
 
 onSnapshot(
   doc(db, 'lamp', 'current'),
   async (snap) => {
     const data = snap.data();
     if (!data) return;
-    try {
-      const res = await fetch(`${PI_URL}/state`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ state: data.state, name: data.name ?? undefined }),
-        signal: AbortSignal.timeout(2000),
-      });
-      if (!res.ok) {
-        console.error(`[bridge] Pi rejected /state POST: HTTP ${res.status}`);
-      } else {
-        console.log(`[bridge] lamp -> ${data.state}${data.name ? ` (${data.name})` : ''}`);
-      }
-    } catch (err) {
-      // Pi unreachable this tick (cable unplugged, Pi rebooting, etc.) — the Pi's own 60s
-      // watchdog (pi/lamp.py) reverts to idle independently, so we just log and move on.
-      console.error('[bridge] POST /state failed:', err?.message ?? err);
-    }
+    // Every delivered snapshot — including the one Firestore redelivers right after a
+    // reconnect — updates `lastKnownState` and POSTs immediately, so a reconnect never has
+    // to wait for the next heartbeat tick (03-FIX).
+    lastKnownState = data;
+    await postState(data);
   },
   (err) => {
     console.error('[bridge] onSnapshot error:', err?.message ?? err);
   },
 );
 
+// Heartbeat: keep the Pi's watchdog from firing purely due to lamp/current going quiet.
+setInterval(() => {
+  if (lastKnownState) {
+    postState(lastKnownState, { heartbeat: true });
+  }
+}, HEARTBEAT_MS);
+
 // --- Joystick poll loop: GET /joystick -> raiseFamilyAlert callable ----------------------
 //
-// Polls every ~500ms; on {"pressed": true} calls the raiseFamilyAlert callable for the demo
-// household. Wrapped so a Pi-unreachable tick or a callable failure logs and moves on without
-// ever crashing the bridge process (T-03-09 — DoS via a hung/failing fetch).
+// Polls every ~500ms. `pressed` is a one-shot flag the Pi sets ONLY on a real CENTER-button
+// press and clears on every read (pi/lamp.py) — direction presses (the local demo-mode cycle)
+// never set it, so `pressed === true` is the sole trigger for raiseFamilyAlert (03-FIX).
+// `demoState` is informational only (mirrors the Pi's current render target for logging) and
+// must never influence the alert decision. Wrapped so a Pi-unreachable tick or a callable
+// failure logs and moves on without ever crashing the bridge process (T-03-09 — DoS via a
+// hung/failing fetch).
+let lastAlertAt = 0;
+let lastLoggedDemoState = null;
+
 setInterval(async () => {
   try {
     const res = await fetch(`${PI_URL}/joystick`, { signal: AbortSignal.timeout(1000) });
     if (!res.ok) return;
-    const { pressed } = await res.json();
-    if (pressed) {
-      console.log('[bridge] joystick press detected -> raiseFamilyAlert');
-      await raiseFamilyAlert({ householdId: DEMO_HOUSEHOLD_ID });
+    const { pressed, demoState } = await res.json();
+
+    if (demoState !== undefined && demoState !== lastLoggedDemoState) {
+      console.log(`[bridge] Pi demo state -> ${demoState}`);
+      lastLoggedDemoState = demoState;
     }
+
+    if (pressed !== true) return;
+
+    const now = Date.now();
+    if (now - lastAlertAt < ALERT_DEBOUNCE_MS) {
+      console.log('[bridge] joystick press detected within debounce window -- skipping raiseFamilyAlert');
+      return;
+    }
+    lastAlertAt = now;
+    console.log('[bridge] joystick press detected -> raiseFamilyAlert');
+    await raiseFamilyAlert({ householdId: DEMO_HOUSEHOLD_ID });
   } catch (err) {
     // Pi unreachable or callable failed this tick — try again next tick.
     console.error('[bridge] joystick poll tick failed:', err?.message ?? err);
