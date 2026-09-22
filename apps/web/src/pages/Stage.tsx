@@ -227,7 +227,11 @@ export default function Stage() {
               ) : (
                 call.risk.claimedIdentity && (
                   <p className="text-center text-3xl">
-                    Claims to be: <span className="font-bold">{call.risk.claimedIdentity}</span>
+                    Claims to be:{' '}
+                    {/* 04-FIX: once matchIdentity() resolves a real household member, show
+                        the correctly-spelled real name (verification.name) instead of the
+                        caller's raw ASR-transcribed claim (risk.claimedIdentity). */}
+                    <span className="font-bold">{call.verification?.name ?? call.risk.claimedIdentity}</span>
                   </p>
                 )
               )}

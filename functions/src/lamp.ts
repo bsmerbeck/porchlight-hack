@@ -20,26 +20,33 @@ function firstToken(value: string | undefined | null): string | null {
 }
 
 async function resolveName(after: CallDoc): Promise<string | null> {
-  if (after.state === 'verified' && after.verification?.memberId) {
-    // 05-ALLOWLIST: an allowlist match already carries its own display name on the call
-    // doc (no household lookup needed) -- cheapest and most reliable path first.
-    if (after.verification.method === 'allowlist' && after.verification.name) {
+  if (after.verification?.memberId) {
+    // 04-FIX: a stored display name (verification.name) always wins, at ANY state, not just
+    // 'verified' -- 05-ALLOWLIST originally wrote this only for allowlist matches, but
+    // runTurn.ts now also writes it the moment a regular claimed-identity match happens
+    // (state:'verifying'), so the lamp/prompts/feed can show the matched household member's
+    // REAL name (e.g. "Brenden") instead of echoing back whatever the ASR pipeline
+    // transcribed the caller saying (e.g. "Brendan") -- both still pass through firstToken,
+    // so this never exposes more than a first name regardless of state.
+    if (after.verification.name) {
       return firstToken(after.verification.name);
     }
-    const householdSnap = await getFirestore().doc(`households/${after.householdId}`).get();
-    const household = householdSnap.data() as HouseholdDoc | undefined;
-    const member = household?.members?.find((m) => m.id === after.verification?.memberId);
-    if (member) return firstToken(member.name);
-    // 05-ALLOWLIST: member id didn't match a real household member -- it may be an
-    // allowlist entry's slug (older doc without verification.name stored). Resolve it
-    // the same way matchAllowlist.ts derives it, before falling through further.
-    const allowlistEntry = household?.allowlist?.find((a) => slugifyName(a.name) === after.verification?.memberId);
-    if (allowlistEntry) return firstToken(allowlistEntry.name);
-    // Neither resolved (bad data) — fall through to the claimedIdentity fallback below
-    // so the Pi still shows *something* rather than nothing.
+    if (after.state === 'verified') {
+      const householdSnap = await getFirestore().doc(`households/${after.householdId}`).get();
+      const household = householdSnap.data() as HouseholdDoc | undefined;
+      const member = household?.members?.find((m) => m.id === after.verification?.memberId);
+      if (member) return firstToken(member.name);
+      // 05-ALLOWLIST: member id didn't match a real household member -- it may be an
+      // allowlist entry's slug (older doc without verification.name stored). Resolve it
+      // the same way matchAllowlist.ts derives it, before falling through further.
+      const allowlistEntry = household?.allowlist?.find((a) => slugifyName(a.name) === after.verification?.memberId);
+      if (allowlistEntry) return firstToken(allowlistEntry.name);
+      // Neither resolved (bad data) — fall through to the claimedIdentity fallback below
+      // so the Pi still shows *something* rather than nothing.
+    }
   }
-  // screening | verifying | scam (and a verified call whose memberId didn't resolve): show the
-  // caller's claimed identity, if any — never a full name, never any other call field.
+  // No resolved member match yet (or a verified call whose memberId didn't resolve): show
+  // the caller's raw claimed identity, if any — never a full name, never any other call field.
   return firstToken(after.risk?.claimedIdentity);
 }
 
@@ -64,10 +71,16 @@ export const mirrorActiveCallToLamp = onDocumentWritten(
       // carrying a fresh VER-05 single-use token; clear the prompt back to 'none' once a
       // verdict lands (or the call otherwise ends) so the phone's modal dismisses itself.
       if (after.state === 'verifying' && after.verification?.memberId) {
+        // 04-FIX: prefer the matched member's REAL name (verification.name, set by
+        // runTurn.ts/matchAllowlist.ts) over the caller's raw ASR-transcribed claim, so the
+        // family's /verify phone shows "Is Brenden calling Grandma right now?" -- the
+        // correctly-spelled real name -- not "Is Brendan..." (what the caller's speech
+        // happened to transcribe as). Falls back to the raw claim only for older docs that
+        // never had verification.name stored.
         await db.doc(`prompts/${after.verification.memberId}`).set({
           callId,
           state: 'verifying',
-          claimedIdentity: after.risk?.claimedIdentity ?? null,
+          claimedIdentity: after.verification.name ?? after.risk?.claimedIdentity ?? null,
           promptedAt: after.verification.promptedAt,
           token: mintVerifyToken(callId, after.verification.memberId),
         });
