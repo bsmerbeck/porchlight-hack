@@ -16,6 +16,7 @@ import { resetDemo } from './demo/resetDemo.js';
 import { writeFamilyReport } from './reports/writeFamilyReport.js';
 import { attackCall } from './attack/attackCall.js';
 import { attackClips } from './demo/attackClips.js';
+import { lampTest } from './demo/lampTest.js';
 
 initializeApp();
 
@@ -56,6 +57,9 @@ export { attackCall };
 // "Attacker soundboard" on /sim instead of a live agent call. Owned by
 // functions/src/demo/attackClips.ts.
 export { attackClips };
+// Phase 6 (06-H): DEMO_TOKEN-gated physical lamp sweep for the OperatorBar "Lamp test".
+// Owned by functions/src/demo/lampTest.ts.
+export { lampTest };
 
 export const joinWaitlist = onCall({ region: REGION, cors: true, maxInstances: 5 }, async (req) => {
   const parsed = WaitlistPayload.safeParse(req.data);
