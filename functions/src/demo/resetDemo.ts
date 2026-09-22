@@ -2,7 +2,7 @@ import { timingSafeEqual } from 'crypto';
 import { z } from 'zod';
 import { onCall, HttpsError } from 'firebase-functions/https';
 import { getFirestore } from 'firebase-admin/firestore';
-import type { HouseholdDoc, HouseholdMember } from '@porchlight/shared';
+import type { CallDoc, HouseholdDoc, HouseholdMember } from '@porchlight/shared';
 import { demoToken, twilioAccountSid, twilioAuthToken } from '../secrets.js';
 import { forceEndCall } from '../screening/endCall.js';
 
@@ -100,6 +100,28 @@ export const resetDemo = onCall(
       alertsCleared++;
     }
 
+    // (2c) households/demo/feed/* -- 06-I: `calls` is deleted above, but the public feed
+    // mirror keeps whatever state it last saw, so a screening/verifying doc would pin the
+    // stage on an old "live" call after a reset. Mark every non-terminal feed doc ended
+    // (terminal history is kept). endedAt = its last activity, not now, so it lands straight
+    // in history instead of flashing a 20s "Call ended" result hold on /stage.
+    const feedSnap = await db.collection('households/demo/feed').get();
+    let feedEnded = 0;
+    for (const doc of feedSnap.docs) {
+      if (keep.has(doc.id)) continue;
+      const data = doc.data() as Partial<CallDoc>;
+      if (data.state !== 'screening' && data.state !== 'verifying') continue;
+      const turns = data.turns ?? [];
+      const endedAt = Math.max(
+        data.startedAt ?? 0,
+        data.risk?.updatedAt ?? 0,
+        turns.length ? turns[turns.length - 1].at : 0,
+        data.verification?.promptedAt ?? 0,
+      );
+      await doc.ref.set({ ...data, state: 'ended', outcome: data.outcome ?? 'screened', endedAt: endedAt || Date.now() });
+      feedEnded++;
+    }
+
     // (3) lamp/current -- back to idle.
     await db.doc('lamp/current').set({ state: 'idle' });
 
@@ -120,6 +142,6 @@ export const resetDemo = onCall(
     const resetAt = Date.now();
     await db.doc('status/demo').set({ resetAt });
 
-    return { callsDeleted, promptsCleared, alertsCleared, resetAt };
+    return { callsDeleted, promptsCleared, alertsCleared, feedEnded, resetAt };
   },
 );

@@ -159,7 +159,7 @@ describe('resetDemo', () => {
     expect(typeof status.resetAt).toBe('number');
     expect(Object.keys(status)).toEqual(['resetAt']);
 
-    expect(result).toEqual({ callsDeleted: 2, promptsCleared: 1, alertsCleared: 2, resetAt: status.resetAt });
+    expect(result).toEqual({ callsDeleted: 2, promptsCleared: 1, alertsCleared: 2, feedEnded: 0, resetAt: status.resetAt });
   });
 
   it('never crashes when forceEndCall throws (stale/already-ended Twilio call) -- still deletes the doc', async () => {
@@ -177,6 +177,33 @@ describe('resetDemo', () => {
     const household = fakeDb.__docs.get('households/demo') as { members: Array<{ id: string; passkeys?: unknown[] }> };
     expect(household.members[0].id).toBe('brenden');
     expect(household.members[0].passkeys).toBeUndefined();
-    expect(result).toMatchObject({ callsDeleted: 0, promptsCleared: 0, alertsCleared: 0 });
+    expect(result).toMatchObject({ callsDeleted: 0, promptsCleared: 0, alertsCleared: 0, feedEnded: 0 });
+  });
+
+  it('06-I: marks non-terminal feed docs ended (endedAt = last activity), keeps terminal history and kept calls', async () => {
+    seed('households/demo/feed/stale-screening', {
+      state: 'screening',
+      startedAt: 1000,
+      turns: [{ role: 'caller', text: 'hi', at: 5000 }],
+      risk: { score: 10, tactics: [], recommendedAction: 'continue', updatedAt: 4000 },
+    });
+    seed('households/demo/feed/stale-verifying', {
+      state: 'verifying',
+      startedAt: 2000,
+      turns: [],
+      verification: { memberId: 'brenden', promptedAt: 9000 },
+    });
+    seed('households/demo/feed/done-scam', { state: 'scam', outcome: 'scam', startedAt: 500, endedAt: 800 });
+    seed('households/demo/feed/kept-call', { state: 'screening', startedAt: 3000 });
+
+    const result = await resetDemo.run({ data: { token: REAL_TOKEN, keepCallIds: ['kept-call'] } } as never);
+
+    const s1 = fakeDb.__docs.get('households/demo/feed/stale-screening') as Record<string, unknown>;
+    expect(s1).toMatchObject({ state: 'ended', outcome: 'screened', endedAt: 5000, startedAt: 1000 });
+    const s2 = fakeDb.__docs.get('households/demo/feed/stale-verifying') as Record<string, unknown>;
+    expect(s2).toMatchObject({ state: 'ended', outcome: 'screened', endedAt: 9000 });
+    expect(fakeDb.__docs.get('households/demo/feed/done-scam')).toEqual({ state: 'scam', outcome: 'scam', startedAt: 500, endedAt: 800 });
+    expect(fakeDb.__docs.get('households/demo/feed/kept-call')).toEqual({ state: 'screening', startedAt: 3000 });
+    expect(result).toMatchObject({ feedEnded: 2 });
   });
 });
