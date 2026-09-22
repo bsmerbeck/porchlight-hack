@@ -1,0 +1,38 @@
+{
+  "contract": "1.0.0",
+  "flavor": "core",
+  "milestone": null,
+  "phases": [
+    {
+      "number": "1",
+      "name": "Foundation and Landing Page Live",
+      "status": "pending"
+    },
+    {
+      "number": "2",
+      "name": "Core Screening Loop",
+      "status": "pending"
+    },
+    {
+      "number": "3",
+      "name": "Lamp",
+      "status": "pending"
+    },
+    {
+      "number": "4",
+      "name": "Family Verification and Dashboard",
+      "status": "pending"
+    },
+    {
+      "number": "5",
+      "name": "Attack Simulator, Demo Hardening, and Pitch",
+      "status": "pending"
+    }
+  ],
+  "next": {
+    "command": "/gsd:progress --next",
+    "label": "Advance to the next step (plan phase 1)",
+    "reason": "Phase 1 of 5 — needs a plan"
+  },
+  "updated_at": "2026-09-22T17:36:51.939Z"
+}

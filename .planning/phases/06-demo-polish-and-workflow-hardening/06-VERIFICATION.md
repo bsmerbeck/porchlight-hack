@@ -1,8 +1,8 @@
 ---
 phase: 06-demo-polish-and-workflow-hardening
-status: human_needed
+status: passed
 verified: 2026-09-22T14:30:00-04:00
-deployed_commit: 0273b8c
+deployed_commit: c82a50b
 human_verification:
   - "W2 live call to +14015861988 → family taps No on real phone → BLOCKED, lamp + Hue red, stage settles to ready after 20s"
   - "W3 live call → family taps Yes + passkey on real phone → VERIFIED, lamp green"
@@ -34,3 +34,14 @@ Automated checks: web tests 50/50, functions tests 95/95, typecheck + build gree
 
 ## Operator notes
 - Stay on /sim while "Run scam script" runs. The browser drives each turn, so navigating away aborts the call.
+
+## Human validation (16:35 EDT): passed
+The user confirmed on the real phone and the live attack call: the approval path works, "Yes" + Face ID verifies and hangs up, "No" and timeouts block, and the line pill tracks the call.
+
+Late fixes found during human validation (06-J / 06-K):
+- Verdict is written before Twilio call control; verified calls speak a confirmation and hang up.
+- Verify window 45s (phone), 50s server backstop.
+- Later ElevenLabs turns join the live call instead of minting a duplicate doc (the double prompt).
+- Passkey auth requests `userVerification: 'required'` (iOS returned UV=false under 'preferred').
+- Twilio secrets corrected (AC Account SID + primary Auth Token).
+- `lineStatus` pill ("On call · m:ss" / "Line free") in the OperatorBar, plus self-heal of orphaned live docs.
