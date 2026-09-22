@@ -1,0 +1,9 @@
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+.firebase/
+*.log
+.DS_Store
+__pycache__/
