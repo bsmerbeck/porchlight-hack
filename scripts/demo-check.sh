@@ -99,6 +99,22 @@ check_hue_bridge() {
   [ "$code" = "200" ]
 }
 
+# Phase 6 (D-11): at least one Hue bulb must be reachable. Needs the paired app key from
+# the gitignored bridge/hue-local.json (read locally, never printed); IP from HUE_URL.
+check_hue_bulbs() {
+  local key_file body user n
+  key_file="$(cd "$(dirname "$0")/.." && pwd)/bridge/hue-local.json"
+  if [ ! -f "$key_file" ]; then
+    echo "no bridge/hue-local.json (Hue app key) -- run pnpm venue:up"
+    return 1
+  fi
+  user=$(node -e 'try{process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).username||"")}catch{}' "$key_file")
+  body=$(curl -s --max-time "$CHECK_TIMEOUT" "${HUE_URL}/api/${user}/lights" 2>/dev/null)
+  n=$(printf '%s' "$body" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const l=JSON.parse(s);const a=Array.isArray(l)?[]:Object.values(l);process.stdout.write(a.filter(x=>x&&x.state&&x.state.reachable).length+"/"+a.length)}catch{process.stdout.write("0/0")}})')
+  echo "reachable bulbs ${n:-0/0}"
+  [ "${n%%/*}" -ge 1 ] 2>/dev/null
+}
+
 # --- runner ----------------------------------------------------------------------------
 
 run_check() {
@@ -120,6 +136,7 @@ run_check "Firestore: lamp/current"              check_firestore_doc "lamp/curre
 run_check "Pi: GET /health"                      check_pi_health
 run_check "Bridge: node bridge/index.mjs running" check_bridge_process
 run_check "Hue Bridge: GET /api/0/config"        check_hue_bridge
+run_check "Hue bulbs reachable >= 1"             check_hue_bulbs
 
 TOTAL=$IDX
 wait
