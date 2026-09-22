@@ -16,7 +16,9 @@
     "lamp:bridge": "node bridge/index.mjs",
     "lamp:bridge:config": "node bridge/write-config.mjs",
     "demo:reset": "node scripts/demo-reset.mjs",
-    "demo:attack": "node scripts/demo-attack.mjs"
+    "demo:attack": "node scripts/demo-attack.mjs",
+    "venue:up": "node scripts/venue-up.mjs",
+    "venue:search": "node scripts/venue-up.mjs --search"
   },
   "devDependencies": {
     "typescript": "6.0.3",

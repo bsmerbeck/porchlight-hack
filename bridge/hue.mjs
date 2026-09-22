@@ -100,6 +100,26 @@ async function countReachable() {
   }
 }
 
+/**
+ * `{reachable, total}` bulb counts for the status/bridge doc (D-12), or `null` if Hue is
+ * disabled or the Hue Bridge did not answer. Never throws.
+ */
+export async function getHueCounts() {
+  if (!hueConfig) return null;
+  try {
+    const res = await fetch(`http://${hueConfig.ip}/api/${hueConfig.username}/lights`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    if (!res.ok) return null;
+    const lights = await res.json();
+    if (!lights || typeof lights !== 'object' || Array.isArray(lights)) return null; // error array
+    const all = Object.values(lights);
+    return { reachable: all.filter((l) => l?.state?.reachable).length, total: all.length };
+  } catch {
+    return null;
+  }
+}
+
 async function putGroupAction(body) {
   try {
     const res = await fetch(`http://${hueConfig.ip}/api/${hueConfig.username}/groups/0/action`, {

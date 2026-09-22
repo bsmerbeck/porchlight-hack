@@ -26,6 +26,26 @@ service cloud.firestore {
       allow list: if true;
       allow write: if false;
     }
+    // Phase 6 (D-12): the Mac bridge's heartbeat doc, read by the web OperatorBar.
+    // The bridge runs with the public web config and NO auth, so the write is open to anyone
+    // but locked to exactly this shape -- demo-grade risk accepted: the worst case is a spoofed
+    // status row on the operator screen, nothing the demo flow depends on.
+    match /status/bridge {
+      allow get: if true;
+      allow create, update: if request.resource.data.keys().hasOnly(['piOk', 'piState', 'hueReachable', 'hueTotal', 'lastBeat', 'version'])
+        && request.resource.data.keys().hasAll(['piOk', 'piState', 'hueReachable', 'hueTotal', 'lastBeat', 'version'])
+        && request.resource.data.lastBeat is number
+        && request.resource.data.piOk is bool
+        && request.resource.data.hueReachable is number
+        && request.resource.data.hueTotal is number
+        && (request.resource.data.piState == null || (request.resource.data.piState is string && request.resource.data.piState.size() < 32))
+        && request.resource.data.version is string && request.resource.data.version.size() < 32;
+    }
+    // Phase 6 (D-10): "Reset done" marker, written only by resetDemo (Admin SDK).
+    match /status/demo {
+      allow get: if true;
+      allow write: if false;
+    }
     // Everything else closed to clients; Admin SDK in Functions bypasses rules
     match /{document=**} {
       allow read, write: if false;
