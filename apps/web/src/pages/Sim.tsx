@@ -6,6 +6,17 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 
 type RunStatus = 'idle' | 'running' | 'done' | 'error';
 
+const DEMO_TOKEN_STORAGE_KEY = 'porchlight_demo_token';
+
+function getDemoToken(): string | null {
+  const stored = window.localStorage.getItem(DEMO_TOKEN_STORAGE_KEY);
+  if (stored) return stored;
+  const entered = window.prompt('Enter the DEMO_TOKEN to launch a real attack call:');
+  if (!entered) return null;
+  window.localStorage.setItem(DEMO_TOKEN_STORAGE_KEY, entered);
+  return entered;
+}
+
 const STATE_BADGE_VARIANT: Record<CallDoc['state'], 'outline' | 'secondary' | 'destructive' | 'default'> = {
   idle: 'outline',
   screening: 'outline',
@@ -27,6 +38,8 @@ export default function Sim() {
   const [status, setStatus] = useState<RunStatus>('idle');
   const [error, setError] = useState<string | null>(null);
   const [callDoc, setCallDoc] = useState<CallDoc | null>(null);
+  const [attackStatus, setAttackStatus] = useState<RunStatus>('idle');
+  const [attackError, setAttackError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!callId) return;
@@ -88,6 +101,36 @@ export default function Sim() {
     }
   }
 
+  /**
+   * ATK-02: launches the real cloned-voice attacker call by invoking `attackCall`
+   * directly (same DEMO_TOKEN-gated callable `pnpm demo:attack` posts to), so the button
+   * and the CLI script exercise the exact same server-side code path. The token is read
+   * from localStorage, prompting once if absent -- never hardcoded in this file.
+   */
+  async function handleLaunchAttack() {
+    const token = getDemoToken();
+    if (!token) return;
+
+    setAttackStatus('running');
+    setAttackError(null);
+
+    try {
+      const [{ fns }, { httpsCallable }] = await Promise.all([
+        import('@/lib/firebase'),
+        import('firebase/functions'),
+      ]);
+
+      const attackCall = httpsCallable<{ token: string }, unknown>(fns, 'attackCall');
+      await attackCall({ token });
+
+      setAttackStatus('done');
+    } catch (err) {
+      console.error('Sim: failed to launch attack call', err);
+      setAttackError('Something went wrong launching the attack call — check the console.');
+      setAttackStatus('error');
+    }
+  }
+
   return (
     <div className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 p-6">
       <div>
@@ -103,6 +146,28 @@ export default function Sim() {
       </Button>
 
       {error && <p className="text-sm text-destructive">{error}</p>}
+
+      <div className="flex flex-col gap-2 border-t pt-6">
+        <p className="text-sm text-muted-foreground">
+          ATK-01/ATK-02 — places a real outbound call, in a consented cloned voice, to the
+          Porchlight demo number only.
+        </p>
+        <Button
+          onClick={() => void handleLaunchAttack()}
+          disabled={attackStatus === 'running'}
+          variant="destructive"
+          size="lg"
+          className="w-fit"
+        >
+          {attackStatus === 'running' ? 'Calling…' : 'Launch attack call (cloned voice)'}
+        </Button>
+        {attackStatus === 'done' && (
+          <p className="text-sm text-muted-foreground">
+            Attack call launched — watch the household feed / lamp for the incoming call.
+          </p>
+        )}
+        {attackError && <p className="text-sm text-destructive">{attackError}</p>}
+      </div>
 
       {callDoc && (
         <Card>
