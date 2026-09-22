@@ -23,6 +23,20 @@ const STATE_LABEL: Record<CallState, string> = {
   ended: 'CALL ENDED',
 };
 
+// 05-ALLOWLIST: 'known' and 'message' are outcomes, not CallStates -- a known-caller call
+// stays state:'verified' (keeping that banner green, per the phase spec) and a
+// message-taking call ends up state:'ended' just like any other finished call. Without
+// this override both would show a generic label ("VERIFIED ✓" / "CALL ENDED") instead of
+// naming what actually happened.
+const OUTCOME_STATE_LABEL: Partial<Record<string, string>> = {
+  known: 'KNOWN CALLER',
+  message: 'MESSAGE TAKEN',
+};
+
+function stateLabel(call: FeedCall): string {
+  return (call.outcome && OUTCOME_STATE_LABEL[call.outcome]) || STATE_LABEL[call.state];
+}
+
 // Full-bleed takeover only fires for these two terminal verdict states, and only holds
 // for a few seconds before the normal live panel (still showing the same state label)
 // returns -- per the plan's "returning to the live/history view" requirement.
@@ -171,13 +185,19 @@ export default function Stage() {
                 className="rounded-2xl px-6 py-6 text-center text-[72px] leading-none font-black md:text-[96px]"
                 style={{ backgroundColor: AMBER_BG, color: AMBER_FG }}
               >
-                {STATE_LABEL[call.state]}
+                {stateLabel(call)}
               </div>
 
-              {call.risk.claimedIdentity && (
+              {call.outcome === 'known' && call.verification?.name ? (
                 <p className="text-center text-3xl">
-                  Claims to be: <span className="font-bold">{call.risk.claimedIdentity}</span>
+                  Known caller: <span className="font-bold">{call.verification.name}</span>
                 </p>
+              ) : (
+                call.risk.claimedIdentity && (
+                  <p className="text-center text-3xl">
+                    Claims to be: <span className="font-bold">{call.risk.claimedIdentity}</span>
+                  </p>
+                )
               )}
 
               <div className="flex flex-col gap-2">
