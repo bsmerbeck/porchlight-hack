@@ -201,6 +201,8 @@ export default function Styleguide() {
       <Board dark />
       <Board dark={false} />
       <OperatorBar
+        alwaysVisible
+        connected={false}
         onReset={fake('reset')}
         onSim={fake('sim')}
         onAttack={fake('attack')}
