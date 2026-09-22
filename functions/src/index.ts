@@ -3,7 +3,7 @@ import { onDocumentCreated } from 'firebase-functions/firestore';
 import { defineSecret } from 'firebase-functions/params';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
-import { WaitlistPayload } from '@porchlight/shared';
+import { WaitlistPayload, CALL_STATES } from '@porchlight/shared';
 
 initializeApp();
 
@@ -44,6 +44,10 @@ export const healthz = onRequest(
   { region: REGION, secrets: [anthropicKey, twilioAccountSid, twilioAuthToken, elevenLabsKey] },
   (_req, res) => {
     const names = ['ANTHROPIC_API_KEY', 'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'ELEVENLABS_API_KEY'];
-    res.json({ ok: true, secrets: names.map((n) => (process.env[n] ? 'set' : 'unset')) });
+    res.json({
+      ok: true,
+      secrets: names.map((n) => (process.env[n] ? 'set' : 'unset')),
+      states: CALL_STATES,
+    });
   },
 );
