@@ -16,3 +16,7 @@ export const elevenLabsLlmToken = defineSecret('ELEVENLABS_LLM_TOKEN');
 // Phase 4's VER-05 signed-link fallback -- a server-only HMAC key, distinct from the
 // four vendor secrets above. See functions/src/verification/verifyLink.ts.
 export const verifyLinkSecret = defineSecret('VERIFY_LINK_SECRET');
+// Phase 5's DEMO-01 shared secret gating the destructive resetDemo onCall -- generated
+// by the executor (openssl rand -hex 24) and set non-interactively, never a vendor
+// credential. See functions/src/demo/resetDemo.ts.
+export const demoToken = defineSecret('DEMO_TOKEN');

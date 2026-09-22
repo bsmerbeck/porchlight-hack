@@ -12,6 +12,7 @@ import { elevenlabsPersonalization } from './screening/elevenlabsPersonalization
 import { forceVerdict } from './screening/endCall.js';
 import { startPasskeyRegistration, finishPasskeyRegistration } from './verification/passkeyRegistration.js';
 import { startPasskeyAuthentication, answerVerification } from './verification/passkeyAuthentication.js';
+import { resetDemo } from './demo/resetDemo.js';
 
 initializeApp();
 
@@ -37,6 +38,8 @@ export { startPasskeyRegistration, finishPasskeyRegistration };
 // Phase 4 (Plan 01): VER-03/04/05 passkey authentication + verdict. Owned by
 // functions/src/verification/passkeyAuthentication.ts.
 export { startPasskeyAuthentication, answerVerification };
+// Phase 5 (Plan 01): DEMO-01 one-command reset. Owned by functions/src/demo/resetDemo.ts.
+export { resetDemo };
 
 export const joinWaitlist = onCall({ region: REGION, cors: true, maxInstances: 5 }, async (req) => {
   const parsed = WaitlistPayload.safeParse(req.data);
