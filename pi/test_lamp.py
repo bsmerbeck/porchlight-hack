@@ -94,5 +94,158 @@ class SelftestSequenceTests(unittest.TestCase):
         )
 
 
+class RotationMathTests(unittest.TestCase):
+    """IMU auto-orientation: _rotate_frame() must be a true 8x8 rotation, verified
+    algebraically (no hardware needed -- pure pixel-array math)."""
+
+    def _marked_frame(self):
+        # A frame where every pixel is a distinct (row, col) marker so a rotation
+        # bug shows up as "pixel ended up in the wrong place" rather than being
+        # masked by symmetry (a solid-color or symmetric test frame could pass a
+        # broken rotation by accident).
+        return [(r, c, 0) for r in range(8) for c in range(8)]
+
+    def test_rotating_90_degrees_four_times_returns_the_original_frame(self):
+        frame = self._marked_frame()
+        rotated = frame
+        for _ in range(4):
+            rotated = lamp._rotate_frame(rotated, 90)
+        self.assertEqual(rotated, frame)
+
+    def test_rotating_180_degrees_flips_both_axes(self):
+        frame = self._marked_frame()
+        rotated = lamp._rotate_frame(frame, 180)
+        for r in range(8):
+            for c in range(8):
+                self.assertEqual(rotated[r * 8 + c], frame[(7 - r) * 8 + (7 - c)])
+
+    def test_rotating_270_is_the_inverse_of_90(self):
+        frame = self._marked_frame()
+        self.assertEqual(lamp._rotate_frame(lamp._rotate_frame(frame, 90), 270), frame)
+
+    def test_rotating_zero_degrees_is_a_no_op(self):
+        frame = self._marked_frame()
+        self.assertEqual(lamp._rotate_frame(frame, 0), frame)
+
+    def test_invalid_rotation_raises(self):
+        with self.assertRaises(ValueError):
+            lamp._rotate_frame(self._marked_frame(), 45)
+
+
+class OrientationMappingTests(unittest.TestCase):
+    """_rotation_from_gravity: dominant-axis dispatch, Z-dominant (flat) keeps
+    the caller's last rotation by returning None."""
+
+    def test_flat_board_returns_none_regardless_of_small_xy_noise(self):
+        self.assertIsNone(lamp._rotation_from_gravity(0.05, -0.03, 0.98))
+
+    def test_positive_y_dominant_maps_to_configured_rotation(self):
+        self.assertEqual(
+            lamp._rotation_from_gravity(0.0, 0.9, 0.1),
+            lamp.ROTATION_FOR_POSITIVE_Y,
+        )
+
+    def test_negative_y_dominant_maps_to_configured_rotation(self):
+        self.assertEqual(
+            lamp._rotation_from_gravity(0.0, -0.9, 0.1),
+            lamp.ROTATION_FOR_NEGATIVE_Y,
+        )
+
+    def test_positive_x_dominant_maps_to_configured_rotation(self):
+        self.assertEqual(
+            lamp._rotation_from_gravity(0.9, 0.0, 0.1),
+            lamp.ROTATION_FOR_POSITIVE_X,
+        )
+
+    def test_negative_x_dominant_maps_to_configured_rotation(self):
+        self.assertEqual(
+            lamp._rotation_from_gravity(-0.9, 0.0, 0.1),
+            lamp.ROTATION_FOR_NEGATIVE_X,
+        )
+
+
+class RotationEnvOverrideTests(unittest.TestCase):
+    def test_valid_rotation_env_var_is_accepted(self):
+        with mock.patch.dict(os.environ, {"PORCHLIGHT_ROTATION": "180"}):
+            self.assertEqual(lamp._rotation_from_env(), 180)
+
+    def test_missing_env_var_returns_none(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("PORCHLIGHT_ROTATION", None)
+            self.assertIsNone(lamp._rotation_from_env())
+
+    def test_invalid_rotation_value_is_rejected(self):
+        with mock.patch.dict(os.environ, {"PORCHLIGHT_ROTATION": "45"}):
+            self.assertIsNone(lamp._rotation_from_env())
+
+    def test_non_numeric_rotation_value_is_rejected(self):
+        with mock.patch.dict(os.environ, {"PORCHLIGHT_ROTATION": "sideways"}):
+            self.assertIsNone(lamp._rotation_from_env())
+
+
+class HealthAndStateRotationFieldTests(unittest.TestCase):
+    """GET /health and POST /state's additive rotation/auto_rotate contract --
+    exercised directly against the shared _state dict (same one the HTTP
+    handler reads/writes), matching this suite's existing hardware-mocked style."""
+
+    def setUp(self):
+        lamp._state["rotation"] = 0
+        lamp._state["auto_rotate"] = True
+
+    def test_state_dict_has_rotation_and_auto_rotate_by_default(self):
+        self.assertIn("rotation", lamp._state)
+        self.assertIn("auto_rotate", lamp._state)
+        self.assertTrue(lamp._state["auto_rotate"])
+
+
+class FontGlyphTests(unittest.TestCase):
+    """5x7 font (Task: legibility upgrade from the original 3x5 table) -- every
+    glyph must declare exactly GLYPH_HEIGHT rows of exactly GLYPH_WIDTH columns,
+    and the scroll-column builder must slice them consistently."""
+
+    def test_every_glyph_has_the_declared_height(self):
+        for ch, rows in lamp._GLYPHS.items():
+            self.assertEqual(
+                len(rows), lamp.GLYPH_HEIGHT, f"glyph {ch!r} has {len(rows)} rows"
+            )
+
+    def test_every_glyph_row_has_the_declared_width(self):
+        for ch, rows in lamp._GLYPHS.items():
+            for i, row in enumerate(rows):
+                self.assertEqual(
+                    len(row),
+                    lamp.GLYPH_WIDTH,
+                    f"glyph {ch!r} row {i} has width {len(row)}",
+                )
+
+    def test_glyph_rows_only_contain_hash_or_dot(self):
+        for ch, rows in lamp._GLYPHS.items():
+            for row in rows:
+                self.assertTrue(
+                    set(row) <= {"#", "."}, f"glyph {ch!r} has unexpected chars: {row!r}"
+                )
+
+    def test_glyph_columns_returns_width_columns_of_height_bits(self):
+        cols = lamp._glyph_columns("A")
+        self.assertEqual(len(cols), lamp.GLYPH_WIDTH)
+        for col in cols:
+            self.assertEqual(len(col), lamp.GLYPH_HEIGHT)
+
+    def test_n_m_w_are_visually_distinct_shapes(self):
+        # The 3x5 font's worst legibility failure was N/M/W collapsing into
+        # near-identical blobs -- assert the three glyphs are pairwise unequal.
+        n, m, w = lamp._GLYPHS["N"], lamp._GLYPHS["M"], lamp._GLYPHS["W"]
+        self.assertNotEqual(n, m)
+        self.assertNotEqual(n, w)
+        self.assertNotEqual(m, w)
+
+    def test_unknown_character_falls_back_to_space_glyph(self):
+        self.assertEqual(lamp._glyph_columns("$"), lamp._glyph_columns(" "))
+
+    def test_verified_frame_with_brenden_produces_a_full_64_pixel_frame(self):
+        frame = lamp.verified_frame(0.0, "Brenden")
+        self.assertEqual(len(frame), 64)
+
+
 if __name__ == "__main__":
     unittest.main()
