@@ -252,10 +252,10 @@ def _make_accelerometer():
 # edge down, so the ethernet edge points left or right) was 180 degrees off
 # in both directions -- confirmed upside-down text at both tilts. Fixed by
 # swapping the two X constants (equivalent to adding 180 to each).
-ROTATION_FOR_POSITIVE_Y = 0
-ROTATION_FOR_NEGATIVE_Y = 180
-ROTATION_FOR_POSITIVE_X = 270
-ROTATION_FOR_NEGATIVE_X = 90
+ROTATION_FOR_POSITIVE_Y = 180
+ROTATION_FOR_NEGATIVE_Y = 0
+ROTATION_FOR_POSITIVE_X = 90
+ROTATION_FOR_NEGATIVE_X = 270
 
 ORIENTATION_SAMPLE_INTERVAL_SEC = 2.0
 
@@ -264,7 +264,7 @@ ORIENTATION_SAMPLE_INTERVAL_SEC = 2.0
 # viewer needs rotation=180 for upright text. Used as the fresh-boot default
 # before any accelerometer reading or joystick/env override exists -- the
 # previous hardcoded 0 was wrong for this mounting.
-DEFAULT_ROTATION = 180
+DEFAULT_ROTATION = 0
 
 
 def _rotation_from_gravity(x, y, z):
