@@ -1,91 +1,57 @@
-import { useEffect, useRef, useState } from 'react';
-import type { CallDoc, CallState } from '@porchlight/shared';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import type { CallDoc } from '@porchlight/shared';
+import {
+  CallerCard,
+  LampGlow,
+  LAMP_TEST_EVENT,
+  OperatorBar,
+  OutcomeBadge,
+  ReadyState,
+  RiskMeter,
+  StateBanner,
+  StatusDot,
+  Transcript,
+  deriveStageState,
+  isLiveCall,
+  stateKey,
+  terminalAt,
+  RESULT_HOLD_MS,
+  type StateKey,
+} from '@/components/porch';
 
 /**
- * DASH-03 projector stage view — `/stage`, already wired into App.tsx. Reads ONLY the
- * public `households/demo/feed/{callId}` mirror (04-01) via a single onSnapshot(list);
- * never `calls/{id}` directly (D-10 closed-rules design). Firebase is dynamically
- * imported inside useEffect (matching Sim.tsx's convention) so this eagerly-imported
- * page (App.tsx renders it without lazy()) never bloats the landing page's main chunk.
- *
- * Projector sizing: body copy >=28px, the state banner >=72px, readable from the back
- * of a room (ROADMAP Phase 4 success criterion 5).
+ * DASH-03 / 06-D projector stage view (`/stage`). Reads ONLY the public
+ * `households/demo/feed/{callId}` mirror via one onSnapshot(list) and derives what's on
+ * screen with deriveStageState(feed, now) (D-06) -- so a browser refresh mid-call rebuilds
+ * exactly the same view. Firebase is dynamically imported so this eagerly-imported page
+ * never bloats the landing chunk. Designed for a 1920x1080 projector, dark theme (D-01),
+ * stage type scale (D-03).
  */
 
 type FeedCall = CallDoc & { id: string };
 
-const STATE_LABEL: Record<CallState, string> = {
-  idle: 'SCREENING',
-  screening: 'SCREENING',
-  verifying: 'VERIFYING…',
-  verified: 'VERIFIED ✓',
-  scam: 'SCAM BLOCKED',
-  ended: 'CALL ENDED',
-};
+const HOUSEHOLD_NAME = 'Margaret';
+/** A "live" doc with no activity for this long is a stale leftover, not a real call. */
+const STALE_LIVE_MS = 10 * 60_000;
+const LAMP_TEST_SEQUENCE: StateKey[] = ['screening', 'verifying', 'verified', 'scam', 'message', 'known', 'idle'];
+const LAMP_TEST_STEP_MS = 1400;
 
-// 05-ALLOWLIST: 'known' and 'message' are outcomes, not CallStates -- a known-caller call
-// stays state:'verified' (keeping that banner green, per the phase spec) and a
-// message-taking call ends up state:'ended' just like any other finished call. Without
-// this override both would show a generic label ("VERIFIED ✓" / "CALL ENDED") instead of
-// naming what actually happened.
-const OUTCOME_STATE_LABEL: Partial<Record<string, string>> = {
-  known: 'KNOWN CALLER',
-  message: 'MESSAGE TAKEN',
-};
-
-function stateLabel(call: FeedCall): string {
-  return (call.outcome && OUTCOME_STATE_LABEL[call.outcome]) || STATE_LABEL[call.state];
+function lastActivity(c: FeedCall): number {
+  const lastTurn = c.turns?.length ? c.turns[c.turns.length - 1].at : 0;
+  return Math.max(c.startedAt, c.risk?.updatedAt ?? 0, lastTurn, c.verification?.promptedAt ?? 0);
 }
 
-// Full-bleed takeover only fires for these two terminal verdict states, and only holds
-// for a few seconds before the normal live panel (still showing the same state label)
-// returns -- per the plan's "returning to the live/history view" requirement.
-const TAKEOVER_BANNER: Partial<Record<CallState, { text: string; bg: string }>> = {
-  verified: { text: 'VERIFIED ✓', bg: 'oklch(0.75 0.19 145)' }, // green — Lamp.tsx GLOW_COLOR.green
-  scam: { text: 'SCAM BLOCKED', bg: 'oklch(0.65 0.22 25)' }, // red — Lamp.tsx GLOW_COLOR.red
-};
-
-const TAKEOVER_DURATION_MS = 5000;
-
-// Amber — the Porchlight brand color (matches --primary / Lamp.tsx GLOW_COLOR.amber).
-const AMBER_BG = 'oklch(0.85 0.17 75)';
-const AMBER_FG = 'oklch(0.2 0.03 60)';
-
-function riskColor(score: number): string {
-  if (score >= 70) return 'oklch(0.65 0.22 25)'; // red
-  if (score >= 40) return AMBER_BG; // amber
-  return 'oklch(0.75 0.19 145)'; // green
+function useNow(intervalMs = 1000) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return now;
 }
 
-// 04-POLISH: the persistent state banner used to render in a fixed amber regardless of
-// state, contradicting the "known-caller call stays state:'verified' (keeping that banner
-// green, per the phase spec)" comment above -- it now actually tracks the call's verdict:
-// green for verified/known, red for scam, blue for a taken message, and a pulsing amber
-// while actively verifying. Idle/screening/ended fall back to the neutral amber brand color.
-const BANNER_PALETTE = {
-  amber: { bg: AMBER_BG, fg: AMBER_FG },
-  green: { bg: 'oklch(0.75 0.19 145)', fg: AMBER_FG }, // Lamp.tsx GLOW_COLOR.green
-  red: { bg: 'oklch(0.65 0.22 25)', fg: 'oklch(0.98 0 0)' }, // Lamp.tsx GLOW_COLOR.red
-  blue: { bg: 'oklch(0.7 0.15 250)', fg: 'oklch(0.98 0 0)' },
-} as const;
-
-function bannerStyle(call: FeedCall): { bg: string; fg: string; pulse: boolean } {
-  if (call.outcome === 'known') return { ...BANNER_PALETTE.green, pulse: false };
-  if (call.outcome === 'message') return { ...BANNER_PALETTE.blue, pulse: false };
-
-  switch (call.state) {
-    case 'verified':
-      return { ...BANNER_PALETTE.green, pulse: false };
-    case 'scam':
-      return { ...BANNER_PALETTE.red, pulse: false };
-    case 'verifying':
-      return { ...BANNER_PALETTE.amber, pulse: true };
-    default:
-      return { ...BANNER_PALETTE.amber, pulse: false };
-  }
-}
-
-/** Short WebAudio beep, gated behind a user click (autoplay policies) -- optional cue. */
+/** Short WebAudio cue; the AudioContext is armed by the first click/keypress (autoplay). */
 function beep(ctx: AudioContext, frequency: number, type: OscillatorType) {
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
@@ -98,186 +64,244 @@ function beep(ctx: AudioContext, frequency: number, type: OscillatorType) {
   osc.stop(ctx.currentTime + 0.4);
 }
 
-export default function Stage() {
-  const [calls, setCalls] = useState<FeedCall[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [takeoverState, setTakeoverState] = useState<CallState | null>(null);
-  const [soundArmed, setSoundArmed] = useState(false);
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const prevStateRef = useRef<CallState | null>(null);
-  const transcriptRef = useRef<HTMLDivElement | null>(null);
+const CUES: Partial<Record<StateKey, [number, OscillatorType]>> = {
+  verifying: [550, 'triangle'],
+  verified: [880, 'sine'],
+  known: [880, 'sine'],
+  scam: [220, 'sawtooth'],
+};
 
+function liveSub(key: StateKey, call: FeedCall): string {
+  const who = call.verification?.name ?? call.risk?.claimedIdentity;
+  if (key === 'verifying') return who ? `Asking ${who} to confirm it's really them…` : "Asking Margaret's family to confirm…";
+  return `AI assistant is screening an unknown caller for ${HOUSEHOLD_NAME}`;
+}
+
+function resultSub(key: StateKey, call: FeedCall): string {
+  const who = call.verification?.name ?? call.risk?.claimedIdentity;
+  switch (key) {
+    case 'scam':
+      return call.verification?.answer === 'no' && who
+        ? `${who} confirmed it wasn't them. The lamp turned red.`
+        : 'Scam script detected. The lamp turned red.';
+    case 'verified':
+      return who ? `${who} confirmed with their passkey. Safe to talk.` : 'Family confirmed. Safe to talk.';
+    case 'known':
+      return who ? `${who} is on ${HOUSEHOLD_NAME}'s trusted list. Call put through.` : 'Trusted caller. Call put through.';
+    case 'message':
+      return call.message?.text ? `"${call.message.text}"` : 'Porchlight took a message for the family.';
+    default:
+      return 'Call ended. Nothing needed from Margaret.';
+  }
+}
+
+export default function Stage() {
+  const reduce = useReducedMotion();
+  const [calls, setCalls] = useState<FeedCall[] | null>(null);
+  const [feedError, setFeedError] = useState(false);
+  const [lampTest, setLampTest] = useState<StateKey | null>(null);
+  const now = useNow();
+  const audioRef = useRef<AudioContext | null>(null);
+  const cueRef = useRef<string | null>(null);
+
+  // Feed subscription (the only source of truth).
   useEffect(() => {
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
-
     void (async () => {
-      const [{ db }, { collection, query, orderBy, onSnapshot }] = await Promise.all([
+      const [{ db }, { collection, query, orderBy, limit, onSnapshot }] = await Promise.all([
         import('@/lib/firebase'),
         import('firebase/firestore'),
       ]);
       if (cancelled) return;
-
-      const feedQuery = query(collection(db, 'households/demo/feed'), orderBy('startedAt', 'desc'));
       unsubscribe = onSnapshot(
-        feedQuery,
+        query(collection(db, 'households/demo/feed'), orderBy('startedAt', 'desc'), limit(25)),
         (snap) => {
+          setFeedError(false);
           setCalls(snap.docs.map((d) => ({ id: d.id, ...(d.data() as CallDoc) })));
         },
         (err) => {
           console.error('Stage: feed onSnapshot failed', err);
-          setError('Could not load the call feed — check the console.');
+          setFeedError(true);
         },
       );
     })();
-
     return () => {
       cancelled = true;
       unsubscribe?.();
     };
   }, []);
 
-  // Single most-recent non-ended call; falls back to the newest overall once every call
-  // has ended, so the stage still shows the last thing that happened.
-  const call = calls?.find((c) => c.state !== 'ended') ?? calls?.[0] ?? null;
-
-  // Fire the full-bleed takeover banner + audio cue exactly once per transition into a
-  // terminal verdict state (not on every re-render / snapshot re-fire of the same state).
+  // Arm audio on the first interaction (browser autoplay policy).
   useEffect(() => {
-    if (!call) return;
-    const prev = prevStateRef.current;
-    prevStateRef.current = call.state;
-    if (prev === call.state) return;
+    const arm = () => {
+      if (!audioRef.current) {
+        try {
+          audioRef.current = new AudioContext();
+        } catch {
+          /* no audio */
+        }
+      }
+    };
+    window.addEventListener('pointerdown', arm);
+    window.addEventListener('keydown', arm);
+    return () => {
+      window.removeEventListener('pointerdown', arm);
+      window.removeEventListener('keydown', arm);
+    };
+  }, []);
 
-    if (TAKEOVER_BANNER[call.state]) {
-      setTakeoverState(call.state);
-      const timer = setTimeout(() => setTakeoverState(null), TAKEOVER_DURATION_MS);
-      audioCtxRef.current &&
-        beep(audioCtxRef.current, call.state === 'verified' ? 880 : 220, call.state === 'verified' ? 'sine' : 'sawtooth');
-      return () => clearTimeout(timer);
-    }
-    if (call.state === 'verifying' && audioCtxRef.current) {
-      beep(audioCtxRef.current, 550, 'triangle');
-    }
-  }, [call?.state, call]);
-
-  // Auto-scroll the transcript to the latest turn as new turns stream in.
+  // Lamp test (OperatorBar): cycle the on-screen lamp through every D-02 state.
   useEffect(() => {
-    const el = transcriptRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [call?.turns.length]);
+    let timers: ReturnType<typeof setTimeout>[] = [];
+    const run = () => {
+      timers.forEach(clearTimeout);
+      timers = LAMP_TEST_SEQUENCE.map((s, i) =>
+        setTimeout(() => setLampTest(i === LAMP_TEST_SEQUENCE.length - 1 ? null : s), i * LAMP_TEST_STEP_MS),
+      );
+    };
+    window.addEventListener(LAMP_TEST_EVENT, run);
+    return () => {
+      window.removeEventListener(LAMP_TEST_EVENT, run);
+      timers.forEach(clearTimeout);
+    };
+  }, []);
 
-  function armSound() {
-    if (!audioCtxRef.current) {
-      audioCtxRef.current = new AudioContext();
-    }
-    setSoundArmed(true);
-  }
+  const view = useMemo(() => {
+    const fresh = (calls ?? []).filter((c) => !isLiveCall(c) || now - lastActivity(c) < STALE_LIVE_MS);
+    return deriveStageState(fresh, now);
+  }, [calls, now]);
 
-  const takeover = takeoverState ? TAKEOVER_BANNER[takeoverState] : null;
+  const call = view.call;
+  const key: StateKey = view.mode === 'ready' ? 'idle' : stateKey(call);
+
+  // Audio cue once per (call, state) transition -- never on the first snapshot after a refresh.
+  useEffect(() => {
+    if (calls === null) return;
+    const sig = call ? `${call.id}:${key}` : 'ready';
+    const prev = cueRef.current;
+    cueRef.current = sig;
+    if (prev === null || prev === sig) return;
+    const cue = CUES[key];
+    if (cue && audioRef.current) beep(audioRef.current, cue[0], cue[1]);
+  }, [calls, call, key]);
+
+  const fade = {
+    initial: reduce ? false : { opacity: 0, scale: 0.985 },
+    animate: { opacity: 1, scale: 1 },
+    exit: reduce ? undefined : { opacity: 0, scale: 0.985 },
+    transition: { duration: 0.35, ease: 'easeOut' as const },
+  };
+
+  const holdLeft = call && view.mode === 'result' ? Math.max(0, RESULT_HOLD_MS - (now - terminalAt(call))) : 0;
+  const headerKey: StateKey = lampTest ?? key;
 
   return (
-    <div className="flex min-h-screen flex-col bg-[oklch(0.2_0.03_60)] text-white">
-      {!soundArmed && (
-        <button
-          type="button"
-          onClick={armSound}
-          className="absolute top-4 right-4 z-10 rounded-full bg-white/10 px-4 py-2 text-sm text-white/80"
-        >
-          Enable sound cue
-        </button>
-      )}
-
-      {takeover ? (
-        <div
-          className="flex flex-1 flex-col items-center justify-center gap-4 text-center"
-          style={{ backgroundColor: takeover.bg }}
-        >
-          <p className="text-7xl font-black text-black md:text-9xl">{takeover.text}</p>
+    <div className="dark flex h-screen min-h-screen flex-col overflow-hidden bg-background text-foreground">
+      {/* Header strip */}
+      <header className="flex h-20 shrink-0 items-center justify-between px-12">
+        <div className="flex items-center gap-4">
+          <LampGlow state={headerKey} size={40} className="text-foreground" />
+          <span className="text-[28px] font-bold tracking-tight">Porchlight</span>
+          <span className="label-caps text-muted-foreground">{HOUSEHOLD_NAME}&apos;s line</span>
         </div>
-      ) : (
-        <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 p-8">
-          <h1 className="text-center text-2xl font-bold opacity-70">Porchlight — stage view</h1>
-
-          {error && <p className="text-2xl text-red-400">{error}</p>}
-          {calls === null && !error && <p className="text-3xl opacity-70">Waiting for a call…</p>}
-          {calls !== null && calls.length === 0 && (
-            <p className="text-3xl opacity-70">No calls yet — Porchlight is watching.</p>
+        <div className="flex items-center gap-6">
+          {view.mode === 'live' && <StatusDot state={key} pulse label={<span className="label-caps">Live call</span>} />}
+          {feedError ? (
+            <StatusDot tone="bad" label={<span className="label-caps">Feed offline</span>} />
+          ) : calls === null ? (
+            <StatusDot tone="warn" pulse label={<span className="label-caps">Connecting</span>} />
+          ) : (
+            <StatusDot tone="ok" label={<span className="label-caps text-muted-foreground">Watching</span>} />
           )}
+        </div>
+      </header>
 
-          {call && (
-            <>
-              {/* State banner: >=72px, colored per bannerStyle (green/red/blue/pulsing amber) */}
-              {(() => {
-                const { bg, fg, pulse } = bannerStyle(call);
-                return (
-                  <div
-                    className={`rounded-2xl px-6 py-6 text-center text-[72px] leading-none font-black md:text-[96px]${pulse ? ' animate-pulse' : ''}`}
-                    style={{ backgroundColor: bg, color: fg }}
-                  >
-                    {stateLabel(call)}
+      <main className="relative min-h-0 flex-1 px-12 pb-12">
+        <AnimatePresence mode="wait" initial={false}>
+          {view.mode === 'ready' || !call ? (
+            <motion.div key="ready" {...fade} className="flex h-full items-center justify-center">
+              <ReadyState
+                state={lampTest ?? 'idle'}
+                lampSize="xl"
+                title={
+                  lampTest ? (
+                    <span className="label-caps text-[40px]!">Lamp test: {lampTest}</span>
+                  ) : (
+                    <>Porchlight is watching {HOUSEHOLD_NAME}&apos;s line</>
+                  )
+                }
+                subtitle={
+                  lampTest
+                    ? 'Cycling every lamp state.'
+                    : 'Unknown callers talk to Porchlight first. Family confirms with one tap. The lamp tells her the answer.'
+                }
+              />
+            </motion.div>
+          ) : view.mode === 'live' ? (
+            <motion.div key={`live:${call.id}`} {...fade} className="flex h-full min-h-0 flex-col gap-8">
+              <StateBanner state={key} sub={liveSub(key, call)} />
+              <div className="grid min-h-0 flex-1 grid-cols-12 gap-8">
+                <section className="col-span-5 flex min-h-0 flex-col gap-8">
+                  <CallerCard
+                    name={call.verification?.name ?? call.risk?.claimedIdentity}
+                    claimedText={call.verification?.claimedText}
+                    from={call.from}
+                    known={call.outcome === 'known'}
+                    className="p-8"
+                  />
+                  <div className="rounded-3xl border bg-card p-8 shadow-soft">
+                    <RiskMeter score={call.risk?.score ?? 0} tactics={call.risk?.tactics ?? []} />
                   </div>
-                );
-              })()}
-
-              {call.outcome === 'known' && call.verification?.name ? (
-                <p className="text-center text-3xl">
-                  Known caller: <span className="font-bold">{call.verification.name}</span>
-                </p>
-              ) : (
-                call.risk.claimedIdentity && (
-                  <p className="text-center text-3xl">
-                    Claims to be:{' '}
-                    {/* 04-FIX: once matchIdentity() resolves a real household member, show
-                        the correctly-spelled real name (verification.name) instead of the
-                        caller's raw ASR-transcribed claim (risk.claimedIdentity). */}
-                    <span className="font-bold">{call.verification?.name ?? call.risk.claimedIdentity}</span>
-                  </p>
-                )
-              )}
-
-              <div className="flex flex-col gap-2">
-                <div className="flex items-center justify-between text-3xl">
-                  <span className="opacity-70">Risk</span>
-                  <span className="font-black">{call.risk.score}</span>
-                </div>
-                <div className="h-8 w-full overflow-hidden rounded-full bg-white/10">
+                </section>
+                <section className="col-span-7 flex min-h-0 flex-col rounded-3xl border bg-card p-8 shadow-soft">
+                  <div className="label-caps mb-4 shrink-0 text-muted-foreground">Live transcript</div>
+                  <Transcript
+                    turns={call.turns ?? []}
+                    pending={call.turns?.length ? (call.turns[call.turns.length - 1].role === 'caller' ? 'assistant' : false) : 'caller'}
+                    className="min-h-0 flex-1 overflow-y-auto"
+                  />
+                </section>
+              </div>
+            </motion.div>
+          ) : (
+            <motion.div key={`result:${call.id}`} {...fade} className="flex h-full min-h-0 flex-col gap-8">
+              <StateBanner state={key} sub={resultSub(key, call)} />
+              <div className="grid min-h-0 flex-1 grid-cols-12 gap-8">
+                <section className="col-span-5 flex min-h-0 flex-col items-center justify-center gap-6 rounded-3xl border bg-card p-8 shadow-soft">
+                  <LampGlow state={key} size="lg" className="text-foreground" />
+                  <OutcomeBadge visual={key} size="lg" />
+                </section>
+                <section className="col-span-7 flex min-h-0 flex-col gap-8">
+                  <CallerCard
+                    name={call.verification?.name ?? call.risk?.claimedIdentity}
+                    claimedText={call.verification?.claimedText}
+                    from={call.from}
+                    known={key === 'known'}
+                    className="p-8"
+                  />
+                  <div className="rounded-3xl border bg-card p-8 shadow-soft">
+                    <RiskMeter score={call.risk?.score ?? 0} tactics={call.risk?.tactics ?? []} label="Final scam risk" />
+                  </div>
+                </section>
+              </div>
+              <div className="flex shrink-0 items-center gap-6">
+                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-2">
                   <div
-                    className="h-full rounded-full transition-all"
-                    style={{ width: `${call.risk.score}%`, backgroundColor: riskColor(call.risk.score) }}
+                    className="h-full rounded-full transition-[width] duration-1000 ease-linear"
+                    style={{ width: `${(holdLeft / RESULT_HOLD_MS) * 100}%`, backgroundColor: 'var(--amber)' }}
                   />
                 </div>
+                <span className="label-caps tabular text-muted-foreground">
+                  Back to watching in {Math.ceil(holdLeft / 1000)}s
+                </span>
               </div>
-
-              {call.risk.tactics.length > 0 && (
-                <div className="flex flex-wrap justify-center gap-2">
-                  {call.risk.tactics.map((tactic) => (
-                    <span key={tactic} className="rounded-full border border-white/30 px-4 py-1 text-xl">
-                      {tactic}
-                    </span>
-                  ))}
-                </div>
-              )}
-
-              <div ref={transcriptRef} className="flex max-h-[40vh] flex-col gap-3 overflow-y-auto">
-                {call.turns.map((turn, i) => (
-                  <p
-                    key={i}
-                    className={
-                      turn.role === 'caller'
-                        ? 'text-left text-3xl'
-                        : 'text-right text-3xl text-[oklch(0.85_0.17_75)]'
-                    }
-                  >
-                    <span className="font-bold">{turn.role === 'caller' ? 'Caller: ' : 'Porchlight: '}</span>
-                    {turn.text}
-                  </p>
-                ))}
-              </div>
-            </>
+            </motion.div>
           )}
-        </div>
-      )}
+        </AnimatePresence>
+      </main>
+
+      <OperatorBar />
     </div>
   );
 }
