@@ -42,3 +42,4 @@ export {
   type StageMode,
   type StageState,
 } from '@/lib/stageState';
+export { LineStatusPill, useLineStatus, formatElapsed, type LineStatus } from './LineStatus';

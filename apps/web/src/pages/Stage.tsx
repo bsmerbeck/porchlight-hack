@@ -5,6 +5,7 @@ import {
   CallerCard,
   LampGlow,
   LAMP_TEST_EVENT,
+  LineStatusPill,
   OperatorBar,
   OutcomeBadge,
   ReadyState,
@@ -17,6 +18,8 @@ import {
   terminalAt,
   RESULT_HOLD_MS,
   type StateKey,
+  useLineStatus,
+  useOperatorVisible,
 } from '@/components/porch';
 import { useVerificationBackstop } from '@/lib/useVerificationBackstop';
 
@@ -91,6 +94,8 @@ function resultSub(key: StateKey, call: FeedCall): string {
 
 export default function Stage() {
   const reduce = useReducedMotion();
+  const [operatorVisible] = useOperatorVisible();
+  const lineStatus = useLineStatus(4000, operatorVisible);
   const [calls, setCalls] = useState<FeedCall[] | null>(null);
   const [feedError, setFeedError] = useState(false);
   const [lampTest, setLampTest] = useState<StateKey | null>(null);
@@ -202,6 +207,8 @@ export default function Stage() {
         </div>
         <div className="flex items-center gap-6">
           {view.mode === 'live' && <StatusDot state={key} pulse label={<span className="label-caps">Live call</span>} />}
+          {/* 06-K: operator-only phone-line indicator; hidden on the projector unless the bar is up. */}
+          {operatorVisible && <LineStatusPill status={lineStatus} />}
           {feedError ? (
             <StatusDot tone="bad" label={<span className="label-caps">Feed offline</span>} />
           ) : calls === null ? (
