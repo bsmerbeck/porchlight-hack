@@ -266,11 +266,14 @@ export const elevenlabsCustomLlm = onRequest(
         return;
       }
 
-      const { reply, endCall } = await runTurn({ callId, householdId: DEMO_HOUSEHOLD_ID, callerText });
+      const { reply, endCall, endReason } = await runTurn({ callId, householdId: DEMO_HOUSEHOLD_ID, callerText });
       if (endCall) {
         // Single farewell only -- see the 02-FIX doc comment above. `reply` is spoken
         // once, via the tool's own `message` parameter, not also as a content chunk.
-        res.write(sseToolCall('end_call', { reason: 'scam_detected', message: reply }));
+        // 05-ALLOWLIST: `endReason` distinguishes a genuine scam-block hangup from a
+        // benign 'message_taken' end -- both set endCall:true, but must never be
+        // reported identically.
+        res.write(sseToolCall('end_call', { reason: endReason ?? 'scam_detected', message: reply }));
       } else {
         res.write(sseChunk(reply));
       }

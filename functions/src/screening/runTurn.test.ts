@@ -305,6 +305,7 @@ describe('runTurn', () => {
     const result = await runTurn({ callId: 'call-end', householdId: DEMO_HOUSEHOLD_ID, callerText: 'send gift cards now' });
 
     expect(result.endCall).toBe(true);
+    expect(result.endReason).toBe('scam_detected');
     const lastUpdate = fakeDb.__updateCalls.at(-1)!;
     expect(lastUpdate.data.state).toBe('scam');
     expect(lastUpdate.data.outcome).toBe('scam');
@@ -346,6 +347,7 @@ describe('runTurn', () => {
     });
 
     expect(result.endCall).toBe(true);
+    expect(result.endReason).toBe('message_taken');
     const lastUpdate = fakeDb.__updateCalls.at(-1)!;
     expect(lastUpdate.data.state).toBe('ended');
     expect(lastUpdate.data.outcome).toBe('message');

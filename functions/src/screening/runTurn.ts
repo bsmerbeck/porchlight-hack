@@ -66,6 +66,10 @@ export interface RunTurnOptions {
 export interface RunTurnResult {
   reply: string;
   endCall: boolean;
+  // 05-ALLOWLIST: lets elevenlabsCustomLlm.ts label the end_call tool's `reason` argument
+  // correctly -- a finalized 'message' end must never be reported as 'scam_detected'.
+  // Omitted when endCall is false.
+  endReason?: 'scam_detected' | 'message_taken';
 }
 
 /**
@@ -135,9 +139,11 @@ export async function runTurn(opts: RunTurnOptions): Promise<RunTurnResult> {
     // 05-ALLOWLIST 'message' outcome) must still report endCall:true, not just an
     // AI-recommended 'end' action from this exact turn's risk snapshot.
     const alreadyEnded = callData?.state === 'ended';
+    const endCall = priorAction === 'end' || alreadyEnded;
     return {
       reply: lastAssistantTurn?.text ?? fallbackTurn(callData?.risk).reply,
-      endCall: priorAction === 'end' || alreadyEnded,
+      endCall,
+      ...(endCall ? { endReason: priorAction === 'message' ? 'message_taken' : 'scam_detected' } : {}),
     };
   }
 
@@ -310,5 +316,10 @@ export async function runTurn(opts: RunTurnOptions): Promise<RunTurnResult> {
 
   await callRef.update(update);
 
-  return { reply: effectiveReply, endCall: effectiveAction === 'end' || messageFinalized };
+  const endCall = effectiveAction === 'end' || messageFinalized;
+  return {
+    reply: effectiveReply,
+    endCall,
+    ...(endCall ? { endReason: messageFinalized ? 'message_taken' : 'scam_detected' } : {}),
+  };
 }

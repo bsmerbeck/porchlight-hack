@@ -257,11 +257,38 @@ describe('elevenlabsCustomLlm', () => {
     expect(args.message).toBe("I'm ending this call now.");
     expect(typeof args.reason).toBe('string');
     expect(args.reason.length).toBeGreaterThan(0);
+    expect(args.reason).toBe('scam_detected'); // default fallback when runTurn omits endReason
 
     // 02-FIX: no separate `delta.content` chunk carrying the reply -- the caller must
     // hear the farewell line exactly once (via the tool's own `message`), never twice.
     const contentLines = dataLines.filter((payload) => payload.choices?.[0]?.delta?.content !== undefined);
     expect(contentLines).toHaveLength(0);
+  });
+
+  // 05-ALLOWLIST Task 3: a finalized "take a message" end must be labeled distinctly from
+  // a scam-block end, so downstream consumers of the end_call tool call never confuse the
+  // two.
+  it("labels the end_call reason 'message_taken' (not 'scam_detected') when runTurn signals a message-taking finalize", async () => {
+    mockRunTurn.mockResolvedValueOnce({
+      reply: "Got it, I'll pass that along. Goodbye.",
+      endCall: true,
+      endReason: 'message_taken',
+    });
+    const req = makeReq({
+      headers: { Authorization: `Bearer ${TOKEN}` },
+      body: { messages: [{ role: 'user', content: 'This is the pharmacy, please tell Margaret her prescription is ready.' }] },
+    });
+    const helper = makeRes();
+
+    await elevenlabsCustomLlm(req as never, helper.res as never);
+
+    const dataLines = helper.body
+      .split('\n\n')
+      .filter((l) => l.startsWith('data: ') && l !== 'data: [DONE]')
+      .map((l) => JSON.parse(l.slice('data: '.length)));
+    const toolCallLine = dataLines.find((payload) => payload.choices?.[0]?.delta?.tool_calls);
+    const args = JSON.parse(toolCallLine.choices[0].delta.tool_calls[0].function.arguments);
+    expect(args.reason).toBe('message_taken');
   });
 
   it('the raw response body carries nothing beyond the documented SSE chunk shape -- no SYSTEM_PROMPT text, no raw model object, only the reply string', async () => {
