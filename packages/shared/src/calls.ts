@@ -50,9 +50,15 @@ export interface CallDoc {
     answeredAt?: number;
     answer?: 'yes' | 'no' | 'timeout';
     method?: 'passkey' | 'link' | 'allowlist';
-    // Display name for an 'allowlist' match -- lets the dashboard/lamp show a friendly
-    // name without a second households/{id} read on the client.
+    // Display name for a resolved match -- the matched household member's REAL name
+    // (05-ALLOWLIST originally wrote this only for allowlist matches; 04-FIX also writes it
+    // for a regular claimed-identity match, e.g. "Brenden") -- lets the dashboard/lamp show
+    // the correctly-spelled name without a second households/{id} read on the client.
     name?: string;
+    // 04-FIX: the caller's raw, ASR-transcribed claim (e.g. "Brendan") kept separate from
+    // `name` above so a misheard spelling never overwrites the real household member's name
+    // on any display surface.
+    claimedText?: string;
   };
   outcome?: 'verified' | 'scam' | 'screened' | 'known' | 'message';
   // Set once a 'message' outcome is finalized (05-ALLOWLIST Task 3).
