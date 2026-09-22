@@ -1,0 +1,14 @@
+[Unit]
+Description=Porchlight Lamp Service
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/porchlight/pi
+ExecStart=/usr/bin/python3 /home/pi/porchlight/pi/lamp.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
