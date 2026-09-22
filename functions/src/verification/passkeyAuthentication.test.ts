@@ -71,7 +71,7 @@ vi.mock('@simplewebauthn/server/helpers', () => ({
   },
 }));
 
-import { startPasskeyAuthentication, answerVerification } from './passkeyAuthentication.js';
+import { startPasskeyAuthentication, answerVerification, expireVerification } from './passkeyAuthentication.js';
 
 // HttpsError's `.message` is just the human-readable text (e.g. "Bad or expired link"); the
 // `.code` property (e.g. 'permission-denied') is what callers actually branch on. Assert both.
@@ -337,5 +337,86 @@ describe('answerVerification', () => {
       'permission-denied',
     );
     expect(mockReleaseCall).not.toHaveBeenCalled();
+  });
+});
+
+describe('expireVerification (06-I server-side timeout backstop)', () => {
+  it('applies the timeout verdict (same effects as the phone answering timeout) once promptedAt + 25s has passed', async () => {
+    seedCall('call-due', {
+      householdId: 'demo',
+      providerCallId: 'CAdue',
+      state: 'verifying',
+      verification: { memberId: 'brenden', promptedAt: Date.now() - 30_000, name: 'Brenden' },
+    });
+
+    const result = await expireVerification.run({ data: { callId: 'call-due' } } as never);
+
+    expect(result).toEqual({ expired: true });
+    expect(mockForceEndCall).toHaveBeenCalledWith('CAdue', expect.any(String));
+    const doc = fakeDb.__docs.get('calls/call-due') as Record<string, unknown>;
+    expect(doc.state).toBe('scam');
+    expect(doc.outcome).toBe('scam');
+    expect(typeof doc.endedAt).toBe('number');
+    const v = doc.verification as { answer: string; answeredAt: number; memberId: string; name: string };
+    expect(v).toMatchObject({ answer: 'timeout', memberId: 'brenden', name: 'Brenden' });
+    expect(typeof v.answeredAt).toBe('number');
+
+    // Idempotent: a second call (e.g. /sim and /stage both firing) is a no-op.
+    mockForceEndCall.mockReset();
+    expect(await expireVerification.run({ data: { callId: 'call-due' } } as never)).toMatchObject({ expired: false });
+    expect(mockForceEndCall).not.toHaveBeenCalled();
+    // And the phone answering late is still rejected by verdict finality.
+    await expectHttpsErrorCode(
+      answerVerification.run({ data: { callId: 'call-due', memberId: 'brenden', answer: 'timeout' } } as never),
+      'failed-precondition',
+    );
+  });
+
+  it('is a no-op if the call was already answered (verdict finality)', async () => {
+    const answered = {
+      householdId: 'demo',
+      providerCallId: 'CAans',
+      state: 'verifying',
+      verification: { memberId: 'brenden', promptedAt: Date.now() - 60_000, answer: 'yes', answeredAt: Date.now() - 50_000 },
+    };
+    seedCall('call-answered', answered);
+
+    const result = await expireVerification.run({ data: { callId: 'call-answered' } } as never);
+
+    expect(result).toEqual({ expired: false, reason: 'already-answered' });
+    expect(mockForceEndCall).not.toHaveBeenCalled();
+    expect(fakeDb.__docs.get('calls/call-answered')).toEqual(answered);
+  });
+
+  it('is a no-op if the call already left verifying (e.g. verified/scam/ended)', async () => {
+    seedCall('call-verified', {
+      householdId: 'demo',
+      state: 'verified',
+      verification: { memberId: 'brenden', promptedAt: Date.now() - 60_000 },
+    });
+    expect(await expireVerification.run({ data: { callId: 'call-verified' } } as never)).toEqual({
+      expired: false,
+      reason: 'not-verifying',
+    });
+    expect((fakeDb.__docs.get('calls/call-verified') as { state: string }).state).toBe('verified');
+  });
+
+  it('is a no-op if it is too early (server clock, not the client, decides)', async () => {
+    seedCall('call-early', {
+      householdId: 'demo',
+      providerCallId: 'CAearly',
+      state: 'verifying',
+      verification: { memberId: 'brenden', promptedAt: Date.now() - 10_000 },
+    });
+
+    const result = await expireVerification.run({ data: { callId: 'call-early' } } as never);
+
+    expect(result).toEqual({ expired: false, reason: 'too-early' });
+    expect(mockForceEndCall).not.toHaveBeenCalled();
+    expect((fakeDb.__docs.get('calls/call-early') as { state: string }).state).toBe('verifying');
+  });
+
+  it('unknown call id is a no-op, not a throw', async () => {
+    expect(await expireVerification.run({ data: { callId: 'nope' } } as never)).toEqual({ expired: false, reason: 'not-found' });
   });
 });

@@ -12,7 +12,7 @@ import {
   TACTIC_META,
   Transcript,
   deriveFreshStageState,
-  isStaleLive,
+  isAbandonedLive,
   formatPhone,
   riskColor,
   stateKey,
@@ -178,11 +178,14 @@ function LiveCallCard({ call, mode }: { call: FeedCall; mode: 'live' | 'result' 
 function HistoryRow({
   call,
   now,
+  abandoned,
   expanded,
   onToggle,
 }: {
   call: FeedCall;
   now: number;
+  /** 06-I: stale or superseded live-state call -- rendered as "Ended". */
+  abandoned: boolean;
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -210,7 +213,7 @@ function HistoryRow({
               <span className="text-[10px] uppercase tracking-wide text-muted-foreground">risk</span>
             </div>
           )}
-          <OutcomeBadge outcome={call.outcome} state={isStaleLive(call, now) ? 'ended' : call.state} size="sm" />
+          <OutcomeBadge outcome={call.outcome} state={abandoned ? 'ended' : call.state} size="sm" />
           <ChevronDown
             size={16}
             aria-hidden
@@ -324,6 +327,7 @@ export default function AppPlaceholder() {
                   key={call.id}
                   call={call}
                   now={now}
+                  abandoned={isAbandonedLive(call, calls ?? [], now)}
                   expanded={expandedCallId === call.id}
                   onToggle={() => setExpandedCallId((cur) => (cur === call.id ? null : call.id))}
                 />

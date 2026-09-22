@@ -21,12 +21,13 @@ import {
   StatusDot,
   Transcript,
   deriveFreshStageState,
-  isStaleLive,
+  isAbandonedLive,
   formatPhone,
   stateKey,
   type OperatorAction,
 } from '@/components/porch';
 import { useBridgeStatus, useDemoFeed, useNow } from '@/lib/useDemoFeed';
+import { useVerificationBackstop } from '@/lib/useVerificationBackstop';
 import { cn } from '@/lib/utils';
 
 type RunStatus = 'idle' | 'running' | 'done' | 'error';
@@ -120,6 +121,8 @@ export default function Sim() {
   const bridge = useBridgeStatus();
   const now = useNow();
   const stage = useMemo(() => deriveFreshStageState(calls ?? [], now), [calls, now]);
+  // 06-I: server-side verification-timeout backstop (same as /stage; server dedupes).
+  useVerificationBackstop(stage.mode === 'live' ? stage.call : undefined, now);
   // Preview: what /stage shows right now; otherwise the call this console just started;
   // otherwise the most recent call (dimmed as "last call").
   const simCall = callId ? calls?.find((c) => c.id === callId) : undefined;
@@ -550,7 +553,7 @@ export default function Sim() {
                       </span>
                     </span>
                     <span className="tabular text-xs text-muted-foreground">{c.risk.score}</span>
-                    <OutcomeBadge outcome={c.outcome} state={isStaleLive(c, now) ? 'ended' : c.state} size="sm" />
+                    <OutcomeBadge outcome={c.outcome} state={isAbandonedLive(c, calls, now) ? 'ended' : c.state} size="sm" />
                   </li>
                 ))}
               </ul>

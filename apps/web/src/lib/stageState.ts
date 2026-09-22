@@ -41,7 +41,17 @@ export function terminalAt(c: StageCallLike): number {
 }
 
 /**
- * - live   = newest (by startedAt) call whose state is screening | verifying
+ * 06-I: a screening/verifying call is SUPERSEDED once any other call started after it --
+ * one phone line, so a newer call means the older one was abandoned (e.g. the operator left
+ * /sim mid-script) and must never outrank the newer call's result.
+ */
+export function isSupersededLive(c: StageCallLike, feedDocs: readonly StageCallLike[]): boolean {
+  return isLiveCall(c) && feedDocs.some((o) => o !== c && o.startedAt > c.startedAt);
+}
+
+/**
+ * - live   = newest (by startedAt) call whose state is screening | verifying, unless a
+ *            newer call (any state) exists -- then it is superseded (06-I) and ignored
  * - result = newest terminal call whose terminalAt is within `holdMs` of `now`
  * - ready  = otherwise
  */
@@ -60,6 +70,7 @@ export function deriveStageState<T extends StageCallLike>(
       if (now - at <= holdMs && (!result || at > terminalAt(result))) result = c;
     }
   }
+  if (live && isSupersededLive(live, feedDocs)) live = undefined;
   if (live) return { mode: 'live', call: live };
   if (result) return { mode: 'result', call: result };
   return { mode: 'ready' };
@@ -87,6 +98,19 @@ export function lastActivity(c: ActivityLike): number {
 /** A screening/verifying call with no activity for > staleLiveMs (abandoned, never ended). */
 export function isStaleLive(c: StageCallLike, now: number, staleLiveMs: number = STALE_LIVE_MS): boolean {
   return isLiveCall(c) && now - lastActivity(c as ActivityLike) >= staleLiveMs;
+}
+
+/**
+ * 06-I: a live-state call that is either stale (no activity for > staleLiveMs) or
+ * superseded by a newer call. History rows on /app and /sim render these as "Ended".
+ */
+export function isAbandonedLive(
+  c: StageCallLike,
+  feedDocs: readonly StageCallLike[],
+  now: number,
+  staleLiveMs: number = STALE_LIVE_MS,
+): boolean {
+  return isStaleLive(c, now, staleLiveMs) || isSupersededLive(c, feedDocs);
 }
 
 /** deriveStageState over the feed after dropping stale (abandoned) live calls. */
