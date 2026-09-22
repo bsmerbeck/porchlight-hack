@@ -59,7 +59,7 @@ export const startPasskeyAuthentication = onCall({ region: REGION, cors: true, m
   const options = await generateAuthenticationOptions({
     rpID,
     allowCredentials: (member.passkeys ?? []).map((p) => ({ id: p.id, transports: p.transports })),
-    userVerification: 'preferred',
+    userVerification: 'required',
   });
 
   await getFirestore().doc(`webauthnChallenges/${memberId}`).set({
