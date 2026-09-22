@@ -121,7 +121,7 @@ describe('elevenlabsCustomLlm', () => {
     expect(helper.ended).toBe(true);
   });
 
-  it('emits an end_call tool_calls delta with the reply as its message argument when runTurn signals endCall:true', async () => {
+  it('emits an end_call tool_calls delta with the reply as its message argument when runTurn signals endCall:true, and NOT also a separate content chunk (single farewell, 02-FIX)', async () => {
     mockRunTurn.mockResolvedValueOnce({ reply: "I'm ending this call now.", endCall: true });
     const req = makeReq({
       headers: { Authorization: `Bearer ${TOKEN}` },
@@ -134,16 +134,24 @@ describe('elevenlabsCustomLlm', () => {
     expect(helper.body).toContain('"end_call"');
     expect(helper.body).toContain('"tool_calls"');
 
-    const toolCallLine = helper.body
+    const dataLines = helper.body
       .split('\n\n')
       .filter((l) => l.startsWith('data: ') && l !== 'data: [DONE]')
-      .map((l) => JSON.parse(l.slice('data: '.length)))
-      .find((payload) => payload.choices?.[0]?.delta?.tool_calls);
+      .map((l) => JSON.parse(l.slice('data: '.length)));
+
+    const toolCallLine = dataLines.find((payload) => payload.choices?.[0]?.delta?.tool_calls);
     expect(toolCallLine).toBeDefined();
     const toolCall = toolCallLine.choices[0].delta.tool_calls[0];
     expect(toolCall.function.name).toBe('end_call');
     const args = JSON.parse(toolCall.function.arguments);
     expect(args.message).toBe("I'm ending this call now.");
+    expect(typeof args.reason).toBe('string');
+    expect(args.reason.length).toBeGreaterThan(0);
+
+    // 02-FIX: no separate `delta.content` chunk carrying the reply -- the caller must
+    // hear the farewell line exactly once (via the tool's own `message`), never twice.
+    const contentLines = dataLines.filter((payload) => payload.choices?.[0]?.delta?.content !== undefined);
+    expect(contentLines).toHaveLength(0);
   });
 
   it('the raw response body carries nothing beyond the documented SSE chunk shape -- no SYSTEM_PROMPT text, no raw model object, only the reply string', async () => {
@@ -173,6 +181,78 @@ describe('elevenlabsCustomLlm', () => {
       const parsed = JSON.parse(payload);
       expect(parsed).toHaveProperty('choices');
     }
+  });
+
+  // 02-FIX regression tests: Tier 3 call_doc_id derivation (hash of the first user
+  // message in `messages[]`) -- the live-call bug this fixes was every turn resolving to
+  // a DIFFERENT `custom-llm-${Date.now()}` doc because neither elevenlabs_extra_body nor
+  // a system-message marker ever carried call_doc_id. With no extra_body/system marker
+  // present, two requests whose `messages[]` share the same first user-authored message
+  // (the standard OpenAI-compatible growing-history shape) must resolve to the SAME
+  // callId, keeping the whole call in one Firestore doc.
+  it('derives the same callId (Tier 3 hash fallback) for two requests sharing the same first user message, with no elevenlabs_extra_body or system-message marker present', async () => {
+    mockRunTurn.mockResolvedValueOnce({ reply: 'Who is calling, please?', endCall: false });
+    mockRunTurn.mockResolvedValueOnce({ reply: "I can't help with that.", endCall: false });
+
+    const firstReq = makeReq({
+      headers: { Authorization: `Bearer ${TOKEN}` },
+      body: { messages: [{ role: 'user', content: "Hi grandma, it's me, Brenden." }] },
+    });
+    await elevenlabsCustomLlm(firstReq as never, makeRes().res as never);
+
+    const secondReq = makeReq({
+      headers: { Authorization: `Bearer ${TOKEN}` },
+      body: {
+        messages: [
+          { role: 'user', content: "Hi grandma, it's me, Brenden." },
+          { role: 'assistant', content: 'Who is calling, please?' },
+          { role: 'user', content: 'I need bail money in gift cards.' },
+        ],
+      },
+    });
+    await elevenlabsCustomLlm(secondReq as never, makeRes().res as never);
+
+    expect(mockRunTurn).toHaveBeenCalledTimes(2);
+    const firstCallId = mockRunTurn.mock.calls[0][0].callId;
+    const secondCallId = mockRunTurn.mock.calls[1][0].callId;
+    expect(firstCallId).toBe(secondCallId);
+    expect(firstCallId).toMatch(/^custom-llm-hash-/);
+  });
+
+  it('Tier 3 hash fallback produces a DIFFERENT callId for a different first user message (no collision across unrelated calls)', async () => {
+    mockRunTurn.mockResolvedValueOnce({ reply: 'ok', endCall: false });
+    mockRunTurn.mockResolvedValueOnce({ reply: 'ok', endCall: false });
+
+    const reqA = makeReq({
+      headers: { Authorization: `Bearer ${TOKEN}` },
+      body: { messages: [{ role: 'user', content: "Hi grandma, it's me, Brenden." }] },
+    });
+    await elevenlabsCustomLlm(reqA as never, makeRes().res as never);
+
+    const reqB = makeReq({
+      headers: { Authorization: `Bearer ${TOKEN}` },
+      body: { messages: [{ role: 'user', content: 'Hello, this is the bank calling.' }] },
+    });
+    await elevenlabsCustomLlm(reqB as never, makeRes().res as never);
+
+    const callIdA = mockRunTurn.mock.calls[0][0].callId;
+    const callIdB = mockRunTurn.mock.calls[1][0].callId;
+    expect(callIdA).not.toBe(callIdB);
+  });
+
+  it('still prefers elevenlabs_extra_body.call_doc_id (Tier 1) over the Tier 3 hash fallback when present', async () => {
+    mockRunTurn.mockResolvedValueOnce({ reply: 'ok', endCall: false });
+    const req = makeReq({
+      headers: { Authorization: `Bearer ${TOKEN}` },
+      body: {
+        messages: [{ role: 'user', content: "Hi grandma, it's me, Brenden." }],
+        elevenlabs_extra_body: { call_doc_id: 'personalization-doc-id' },
+      },
+    });
+
+    await elevenlabsCustomLlm(req as never, makeRes().res as never);
+
+    expect(mockRunTurn.mock.calls[0][0].callId).toBe('personalization-doc-id');
   });
 
   it('degrades to a complete, valid SSE stream with a generic fallback line when runTurn throws -- never a bare 500', async () => {
