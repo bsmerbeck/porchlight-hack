@@ -18,9 +18,10 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, doc, onSnapshot } from 'firebase/firestore';
+import { getFirestore, doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { loadHue, setHueState } from './hue.mjs';
+import { getHueCounts, loadHue, setHueState } from './hue.mjs';
+import { SETTLE_HOLD_MS, effectiveState, settleDelayMs } from './settle.mjs';
 
 // The static IPv4 link-local address assigned to the Pi's ethernet interface (03-RESEARCH.md
 // Pattern 5 / Pitfall 2 — plain IPv4 sidesteps Node fetch()'s unreliable IPv6 zone-id support).
@@ -134,17 +135,95 @@ async function postState(data, { heartbeat = false } = {}) {
   }
 }
 
+// --- status/bridge (Phase 6, D-12) --------------------------------------------------------
+//
+// Written every heartbeat and on every lamp change so the web OperatorBar can show Pi / Hue /
+// heartbeat age. Shape is locked by firestore.rules (exactly these keys, lastBeat a number):
+//   { piOk: boolean, piState: string|null, hueReachable: number, hueTotal: number,
+//     lastBeat: number (epoch ms), version: string }
+// The bridge has no auth, so the rule lets anyone write a doc of this shape -- demo-grade risk,
+// the worst case is a spoofed status row on the operator screen.
+const BRIDGE_VERSION = '06-B';
+
+async function readPiHealth() {
+  try {
+    const res = await fetch(`${PI_URL}/health`, { signal: AbortSignal.timeout(1500) });
+    if (!res.ok) return { piOk: false, piState: null };
+    const body = await res.json();
+    return { piOk: body?.ok === true, piState: typeof body?.state === 'string' ? body.state : null };
+  } catch {
+    return { piOk: false, piState: null };
+  }
+}
+
+let statusWriteInFlight = false;
+async function writeBridgeStatus() {
+  if (statusWriteInFlight) return;
+  statusWriteInFlight = true;
+  try {
+    const [pi, hue] = await Promise.all([readPiHealth(), getHueCounts()]);
+    await setDoc(doc(db, 'status', 'bridge'), {
+      piOk: pi.piOk,
+      piState: pi.piState,
+      hueReachable: hue?.reachable ?? 0,
+      hueTotal: hue?.total ?? 0,
+      lastBeat: Date.now(),
+      version: BRIDGE_VERSION,
+    });
+  } catch (err) {
+    console.error('[bridge] status/bridge write failed:', err?.message ?? err);
+  } finally {
+    statusWriteInFlight = false;
+  }
+}
+
+// --- Settle to ready (Phase 6, D-07) ------------------------------------------------------
+//
+// verified / scam / ended hold for SETTLE_HOLD_MS from lamp/current.updatedAt, then the Pi +
+// Hue go back to idle LOCALLY. Firestore is never written (lamp/current stays the truth for
+// the screens, which apply the same 20s rule themselves). Any new snapshot cancels the timer.
+let settled = false;
+let settleTimer = null;
+
+/** What the room should show right now: lamp/current, or idle once a verdict has settled. */
+function renderData() {
+  if (!lastKnownState) return null;
+  const state = effectiveState(lastKnownState, settled);
+  return state === lastKnownState.state ? lastKnownState : { state };
+}
+
+async function renderNow(opts) {
+  const data = renderData();
+  if (!data) return;
+  await postState(data, opts);
+  await setHueState(data.state, data.name);
+}
+
 onSnapshot(
   doc(db, 'lamp', 'current'),
   async (snap) => {
     const data = snap.data();
     if (!data) return;
+    const receivedAt = Date.now();
     // Every delivered snapshot — including the one Firestore redelivers right after a
     // reconnect — updates `lastKnownState` and POSTs immediately, so a reconnect never has
     // to wait for the next heartbeat tick (03-FIX).
     lastKnownState = data;
-    await postState(data);
-    await setHueState(data.state, data.name);
+    if (settleTimer) clearTimeout(settleTimer);
+    settleTimer = null;
+    const delay = settleDelayMs(data, receivedAt, receivedAt);
+    settled = delay === 0; // a stale verdict (e.g. bridge restarted later) settles immediately
+    if (delay > 0) {
+      settleTimer = setTimeout(() => {
+        settleTimer = null;
+        if (lastKnownState !== data) return; // superseded
+        settled = true;
+        console.log(`[bridge] ${data.state} held ${SETTLE_HOLD_MS / 1000}s -> settling room to idle (Firestore untouched)`);
+        renderNow().then(() => writeBridgeStatus());
+      }, delay);
+    }
+    await renderNow();
+    writeBridgeStatus();
   },
   (err) => {
     console.error('[bridge] onSnapshot error:', err?.message ?? err);
@@ -152,12 +231,13 @@ onSnapshot(
 );
 
 // Heartbeat: keep the Pi's watchdog from firing purely due to lamp/current going quiet.
+// Re-sends the EFFECTIVE state (idle once a verdict settled) so a heartbeat never un-settles.
 setInterval(() => {
-  if (lastKnownState) {
-    postState(lastKnownState, { heartbeat: true });
-    setHueState(lastKnownState.state, lastKnownState.name);
-  }
+  renderNow({ heartbeat: true }).then(() => writeBridgeStatus());
 }, HEARTBEAT_MS);
+
+// First status write right away (the lamp snapshot may take a moment to arrive).
+writeBridgeStatus();
 
 // --- Joystick poll loop: GET /joystick -> raiseFamilyAlert callable ----------------------
 //
