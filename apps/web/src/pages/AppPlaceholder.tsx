@@ -11,7 +11,7 @@ import {
   StatusDot,
   TACTIC_META,
   Transcript,
-  deriveStageState,
+  deriveFreshStageState,
   formatPhone,
   riskColor,
   stateKey,
@@ -262,7 +262,7 @@ export default function AppPlaceholder() {
   const now = useNow();
   const [expandedCallId, setExpandedCallId] = useState<string | null>(null);
 
-  const stage = useMemo(() => deriveStageState(calls ?? [], now), [calls, now]);
+  const stage = useMemo(() => deriveFreshStageState(calls ?? [], now), [calls, now]);
   const current = stage.mode === 'ready' ? undefined : stage.call;
   const history = (calls ?? []).filter((c) => c.id !== current?.id);
 

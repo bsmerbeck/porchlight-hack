@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   RESULT_HOLD_MS,
+  STALE_LIVE_MS,
+  deriveFreshStageState,
   deriveStageState,
+  lastActivity,
   isTerminalCall,
   stateVisual,
   terminalAt,
@@ -112,5 +115,27 @@ describe('stateVisual', () => {
     expect(stateVisual(c({ outcome: 'message' })).colorVar).toBe('var(--state-message)');
     expect(stateVisual(c({ state: 'scam' })).colorVar).toBe('var(--state-scam)');
     expect(stateVisual(null).key).toBe('idle');
+  });
+});
+
+describe('deriveFreshStageState (06-H stale live filter)', () => {
+  const T0 = 10_000_000;
+  it('ignores a verifying call with no activity for > STALE_LIVE_MS (ready, not live)', () => {
+    const stale = { state: 'verifying' as const, startedAt: T0 - STALE_LIVE_MS - 1 };
+    expect(deriveFreshStageState([stale], T0).mode).toBe('ready');
+    // the raw derivation would still pin it live
+    expect(deriveStageState([stale], T0).mode).toBe('live');
+  });
+  it('keeps an old call live if it had recent activity (a turn)', () => {
+    const active = { state: 'screening' as const, startedAt: T0 - STALE_LIVE_MS - 60_000, turns: [{ at: T0 - 5_000 }] };
+    expect(deriveFreshStageState([active], T0).mode).toBe('live');
+    expect(lastActivity(active)).toBe(T0 - 5_000);
+  });
+  it('prefers a fresh live call over a stale one and still shows recent results', () => {
+    const stale = { state: 'verifying' as const, startedAt: T0 - STALE_LIVE_MS * 2 };
+    const fresh = { state: 'screening' as const, startedAt: T0 - 1_000 };
+    expect(deriveFreshStageState([stale, fresh], T0).call).toBe(fresh);
+    const result = { state: 'scam' as const, startedAt: T0 - 30_000, endedAt: T0 - 1_000 };
+    expect(deriveFreshStageState([stale, result], T0).mode).toBe('result');
   });
 });

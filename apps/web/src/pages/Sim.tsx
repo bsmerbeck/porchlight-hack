@@ -20,7 +20,7 @@ import {
   StateBanner,
   StatusDot,
   Transcript,
-  deriveStageState,
+  deriveFreshStageState,
   formatPhone,
   stateKey,
   type OperatorAction,
@@ -118,7 +118,7 @@ export default function Sim() {
   const { calls, error: feedError } = useDemoFeed();
   const bridge = useBridgeStatus();
   const now = useNow();
-  const stage = useMemo(() => deriveStageState(calls ?? [], now), [calls, now]);
+  const stage = useMemo(() => deriveFreshStageState(calls ?? [], now), [calls, now]);
   // Preview: what /stage shows right now; otherwise the call this console just started;
   // otherwise the most recent call (dimmed as "last call").
   const simCall = callId ? calls?.find((c) => c.id === callId) : undefined;
