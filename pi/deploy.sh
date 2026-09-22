@@ -24,9 +24,18 @@ ssh "${PI_HOST}" '
 '
 
 echo "==> Waiting for ${PI_URL}/health"
-if curl -sf "${PI_URL}/health" > /dev/null; then
+HEALTH_OK=0
+for i in $(seq 1 10); do
+  if curl -sf -m 2 "${PI_URL}/health" > /dev/null; then
+    HEALTH_OK=1
+    break
+  fi
+  sleep 1
+done
+
+if [ "${HEALTH_OK}" -eq 1 ]; then
   echo "PASS: ${PI_URL}/health is responding — deploy succeeded."
 else
-  echo "FAIL: ${PI_URL}/health did not respond after deploy." >&2
+  echo "FAIL: ${PI_URL}/health did not respond after deploy (waited up to 10s for systemd startup)." >&2
   exit 1
 fi

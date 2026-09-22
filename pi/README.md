@@ -53,8 +53,21 @@ service code was written:
 ```
 
 This copies `pi/` to the Pi (`/home/pi/porchlight/pi/`), installs and enables
-`porchlight-lamp.service` via systemd, and curls `/health` to confirm the
-service is live.
+`porchlight-lamp.service` via systemd, and curls `/health` (retrying for up
+to 10s to give the unit time to finish starting) to confirm the service is
+live.
+
+**Reboot survival confirmed live** (`sudo reboot` on the Pi, then polling
+`GET /health` from the Mac every 5s): `journalctl -u porchlight-lamp.service
+-b` shows the unit fails its first two start attempts right after boot with
+`OSError: [Errno 99] Cannot assign requested address` — the static
+`169.254.10.2` link-local address isn't up on `eth0` yet when
+`ThreadingHTTPServer` tries to bind. `Restart=always`/`RestartSec=2` retries
+until the interface is ready (3rd attempt succeeded, ~5s after the first),
+exactly the recovery path `lamp.py`'s bind comment describes — no
+`network-online.target` ordering was needed. End to end, `/health` answered
+`{"ok": true, "state": "idle"}` again within ~60s of `sudo reboot`, with zero
+manual steps on the Pi.
 
 ## Manual state-check runbook
 
