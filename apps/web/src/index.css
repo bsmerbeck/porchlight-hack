@@ -126,3 +126,23 @@
     @apply font-sans;
     }
 }
+
+@keyframes porch-glow {
+  0%,
+  100% {
+    opacity: 0.7;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.lamp-glow {
+  animation: porch-glow 4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lamp-glow {
+    animation: none;
+  }
+}
