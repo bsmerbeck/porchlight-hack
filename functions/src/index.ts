@@ -13,6 +13,7 @@ import { forceVerdict } from './screening/endCall.js';
 import { startPasskeyRegistration, finishPasskeyRegistration } from './verification/passkeyRegistration.js';
 import { startPasskeyAuthentication, answerVerification } from './verification/passkeyAuthentication.js';
 import { resetDemo } from './demo/resetDemo.js';
+import { writeFamilyReport } from './reports/writeFamilyReport.js';
 
 initializeApp();
 
@@ -40,6 +41,9 @@ export { startPasskeyRegistration, finishPasskeyRegistration };
 export { startPasskeyAuthentication, answerVerification };
 // Phase 5 (Plan 01): DEMO-01 one-command reset. Owned by functions/src/demo/resetDemo.ts.
 export { resetDemo };
+// Phase 5 (Plan 01): RISK-04 post-call plain-English family report. Owned by
+// functions/src/reports/writeFamilyReport.ts.
+export { writeFamilyReport };
 
 export const joinWaitlist = onCall({ region: REGION, cors: true, maxInstances: 5 }, async (req) => {
   const parsed = WaitlistPayload.safeParse(req.data);
