@@ -20,3 +20,9 @@ export const verifyLinkSecret = defineSecret('VERIFY_LINK_SECRET');
 // by the executor (openssl rand -hex 24) and set non-interactively, never a vendor
 // credential. See functions/src/demo/resetDemo.ts.
 export const demoToken = defineSecret('DEMO_TOKEN');
+// Phase 5's ATK-01 attack simulator -- the second ("Attacker") ElevenLabs agent id and
+// its imported outbound-caller-ID phone_number id, set via the ElevenLabs dashboard
+// (see ATTACKER_CONSENT.md for the consented-clone process that precedes these values
+// existing at all). See functions/src/attack/attackCall.ts.
+export const elevenLabsAttackerAgentId = defineSecret('ELEVENLABS_ATTACKER_AGENT_ID');
+export const elevenLabsAttackerPhoneId = defineSecret('ELEVENLABS_ATTACKER_PHONE_ID');
