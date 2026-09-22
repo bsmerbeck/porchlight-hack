@@ -5,10 +5,14 @@ import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { WaitlistPayload, CALL_STATES } from '@porchlight/shared';
 import { anthropicKey, twilioAccountSid, twilioAuthToken, elevenLabsKey } from './secrets.js';
 import { startSimulatedCall, simulateTurn } from './screening/simulateTurn.js';
+import { mirrorActiveCallToLamp } from './lamp.js';
 
 initializeApp();
 
 const REGION = 'us-central1';
+
+// Phase 3 (Plan 02): Firestore -> lamp bridge. Owned by functions/src/lamp.ts.
+export { mirrorActiveCallToLamp };
 
 // Declared in ./secrets.ts so screening modules can import the SecretParam objects
 // directly without a circular import through this file. Re-exported here so

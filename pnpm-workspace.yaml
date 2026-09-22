@@ -2,6 +2,7 @@ packages:
   - 'apps/*'
   - 'packages/*'
   - 'functions'
+  - 'bridge'
 overrides:
   zod: 4.4.3
 allowBuilds:
