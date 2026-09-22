@@ -244,12 +244,27 @@ def _make_accelerometer():
 # ends up needing a different mapping, these four constants are the ONLY
 # numbers that encode "which physical tilt maps to which rotation" -- change
 # these, not the detection logic in _rotation_from_gravity.
+#
+# 03-IMU-FIX (2026-09-22 physical tilt test against the real Pi): the Y-axis
+# pair (board standing on its SHORT edges -- the ethernet/USB edge down, or
+# the opposite GPIO edge down so ethernet ends up up) was already correct.
+# The X-axis pair (board standing on its LONG edges -- GPIO or HDMI/power
+# edge down, so the ethernet edge points left or right) was 180 degrees off
+# in both directions -- confirmed upside-down text at both tilts. Fixed by
+# swapping the two X constants (equivalent to adding 180 to each).
 ROTATION_FOR_POSITIVE_Y = 0
 ROTATION_FOR_NEGATIVE_Y = 180
-ROTATION_FOR_POSITIVE_X = 90
-ROTATION_FOR_NEGATIVE_X = 270
+ROTATION_FOR_POSITIVE_X = 270
+ROTATION_FOR_NEGATIVE_X = 90
 
 ORIENTATION_SAMPLE_INTERVAL_SEC = 2.0
+
+# Confirmed empirically (2026-09-22, physical check against the real Pi):
+# board lying flat with the joystick nub at the bottom-right from the
+# viewer needs rotation=180 for upright text. Used as the fresh-boot default
+# before any accelerometer reading or joystick/env override exists -- the
+# previous hardcoded 0 was wrong for this mounting.
+DEFAULT_ROTATION = 180
 
 
 def _rotation_from_gravity(x, y, z):
@@ -282,6 +297,221 @@ def _rotation_from_env():
         )
         return None
     return val
+
+
+# --- Joystick manual-orientation calibration (long-press, flat mounting) ---
+#
+# When the board is lying flat, gravity alone can't tell auto-rotate which way
+# is "up" (Z-dominant, see _rotation_from_gravity). A long-press on a joystick
+# direction lets a human say "this way is toward me / the table edge" instead.
+#
+# The joystick's four direction switches are wired to fixed physical positions
+# on the same PCB as the LED matrix, so "pressing UP" always corresponds to
+# the SAME native (unrotated, pre-_rotate_frame) edge of the 8x8 grid
+# regardless of how the whole assembly is mounted in the housing -- rotation
+# and mounting offset apply equally to both. Given that, the rotation needed
+# to bring a given native edge to the *bottom* of the rendered (post-rotation)
+# frame is a pure grid-math fact (README.md "Joystick Orientation Calibration"
+# has the derivation): native bottom -> 0, native right -> 90, native top ->
+# 180, native left -> 270.
+ROTATION_FOR_JOYSTICK_DOWN = 0
+ROTATION_FOR_JOYSTICK_RIGHT = 90
+ROTATION_FOR_JOYSTICK_UP = 180
+ROTATION_FOR_JOYSTICK_LEFT = 270
+
+_ROTATION_FOR_JOYSTICK_DIRECTION = {
+    "down": ROTATION_FOR_JOYSTICK_DOWN,
+    "right": ROTATION_FOR_JOYSTICK_RIGHT,
+    "up": ROTATION_FOR_JOYSTICK_UP,
+    "left": ROTATION_FOR_JOYSTICK_LEFT,
+}
+
+LONG_PRESS_SEC = 0.8
+CONFIRMATION_FLASH_SEC = 1.0
+
+ROTATION_PERSIST_PATH = "/home/pi/porchlight/rotation.json"
+
+
+def _save_rotation(rotation):
+    """Atomic write (tmp file + os.replace) so a crash mid-write never leaves
+    a corrupt/partial rotation.json behind."""
+    tmp_path = ROTATION_PERSIST_PATH + ".tmp"
+    try:
+        with open(tmp_path, "w") as f:
+            json.dump({"rotation": rotation}, f)
+        os.replace(tmp_path, ROTATION_PERSIST_PATH)
+    except OSError as exc:
+        print(f"lamp.py: failed to persist rotation to {ROTATION_PERSIST_PATH} ({exc})", file=sys.stderr)
+
+
+def _load_persisted_rotation():
+    """Returns the persisted rotation (0/90/180/270) or None if no valid
+    persisted value exists (missing file, unreadable, corrupt JSON, or an
+    out-of-range value)."""
+    try:
+        with open(ROTATION_PERSIST_PATH) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+    val = data.get("rotation") if isinstance(data, dict) else None
+    if val in (0, 90, 180, 270):
+        return val
+    return None
+
+
+def _clear_persisted_rotation():
+    try:
+        os.remove(ROTATION_PERSIST_PATH)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        print(f"lamp.py: failed to clear persisted rotation at {ROTATION_PERSIST_PATH} ({exc})", file=sys.stderr)
+
+
+# 5-row-tall arrow glyphs drawn in NATIVE (pre-rotation) grid coordinates --
+# each points toward the native edge matching its name (e.g. "up" points at
+# native row 0). Fed through the SAME _rotate_frame() pipeline as every other
+# frame, using whatever rotation the matching long-press just set -- by the
+# native-edge-to-output-bottom derivation above, the arrow always ends up
+# pointing at the *output* bottom (i.e. "down, toward the viewer") after
+# rotation, confirming the calibration visually regardless of which direction
+# was pressed.
+_ARROW_SHAPES = {
+    "up": [
+        "...##...",
+        "..####..",
+        ".######.",
+        "...##...",
+        "...##...",
+        "...##...",
+        "...##...",
+        "........",
+    ],
+    "down": [
+        "...##...",
+        "...##...",
+        "...##...",
+        "...##...",
+        ".######.",
+        "..####..",
+        "...##...",
+        "........",
+    ],
+    "left": [
+        "........",
+        "...#....",
+        "..##....",
+        ".######.",
+        ".######.",
+        "..##....",
+        "...#....",
+        "........",
+    ],
+    "right": [
+        "........",
+        "....#...",
+        "....##..",
+        ".######.",
+        ".######.",
+        "....##..",
+        "....#...",
+        "........",
+    ],
+}
+
+
+def _shape_frame(rows, color=WHITE):
+    """rows: 8 strings of 8 chars ('#' = lit). Returns a flat 64-pixel frame."""
+    return [color if ch == "#" else (0, 0, 0) for row in rows for ch in row]
+
+
+def _arrow_frame(direction):
+    return _shape_frame(_ARROW_SHAPES[direction])
+
+
+def _static_glyph_frame(ch, color=WHITE, col_offset=1):
+    """Renders a single non-scrolling 5x7 glyph (from _GLYPHS, defined further
+    below) top-aligned and roughly centered on the 8x8 grid -- used for the
+    joystick center-long-press "reset to auto" confirmation ('A')."""
+    frame = [(0, 0, 0)] * 64
+    rows = _GLYPHS.get(ch, _GLYPHS[" "])
+    for r, row_str in enumerate(rows):
+        if r >= 8:
+            break
+        for c, mark in enumerate(row_str):
+            if mark != "#":
+                continue
+            cc = col_offset + c
+            if 0 <= cc < 8:
+                frame[r * 8 + cc] = color
+    return frame
+
+
+def _process_joystick_event(press_start, code, value, now):
+    """Pure press/release state machine, no I/O -- takes the mutable
+    press_start dict (code -> press timestamp), an incoming evdev (code,
+    value) pair, and the current time; returns "long"/"short"/None. Kept
+    separate from joystick_loop so long-press timing is unit-testable without
+    a real evdev device or real time.sleep (test_lamp.py LongPressTimingTests)."""
+    if code not in (KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_ENTER):
+        return None
+    if value == 1:  # press
+        press_start[code] = now
+        return None
+    if value == 0:  # release
+        started = press_start.pop(code, None)
+        if started is None:
+            return None
+        return "long" if (now - started) >= LONG_PRESS_SEC else "short"
+    return None  # autorepeat (value == 2) -- ignored, timing is press-to-release
+
+
+def _handle_joystick_short_press(code):
+    """Pre-existing short-press behavior (Task 3, 05-01-PLAN.md), UNTOUCHED by
+    this fix -- center sets the one-shot family-alert flag, up/down/left/right
+    drive the local demo-mode cycle."""
+    if code == KEY_ENTER:
+        with _state_lock:
+            _state["joystick_pressed"] = True
+        return
+    global _last_post_at
+    if code in (KEY_UP, KEY_RIGHT):
+        _cycle_joystick_state(1)
+        _last_post_at = time.time()
+    elif code in (KEY_DOWN, KEY_LEFT):
+        _cycle_joystick_state(-1)
+        _last_post_at = time.time()
+
+
+def _handle_joystick_long_press(code):
+    """center long-press resets to auto-rotate and clears any persisted
+    manual calibration; a direction long-press pins rotation so that
+    direction becomes the bottom of the text, persists it, and turns
+    auto_rotate off until the next center long-press."""
+    if code == KEY_ENTER:
+        _clear_persisted_rotation()
+        with _state_lock:
+            _state["auto_rotate"] = True
+            _state["rotation_source"] = "auto"
+            _state["flash_frame"] = _static_glyph_frame("A")
+            _state["flash_until"] = time.time() + CONFIRMATION_FLASH_SEC
+        print("lamp.py: joystick center long-press -- reset to auto-rotate", file=sys.stderr)
+        return
+    direction = _JOYSTICK_KEY_DIRECTION.get(code)
+    if direction is None:
+        return
+    rotation = _ROTATION_FOR_JOYSTICK_DIRECTION[direction]
+    _save_rotation(rotation)
+    with _state_lock:
+        _state["rotation"] = rotation
+        _state["auto_rotate"] = False
+        _state["rotation_source"] = "joystick"
+        _state["flash_frame"] = _arrow_frame(direction)
+        _state["flash_until"] = time.time() + CONFIRMATION_FLASH_SEC
+    print(
+        f"lamp.py: joystick long-press {direction} -> rotation {rotation} (persisted to {ROTATION_PERSIST_PATH})",
+        file=sys.stderr,
+    )
 
 
 def orientation_loop():
@@ -322,11 +552,22 @@ _state = {
     # rotation/auto_rotate: applied to every frame before it's written to the
     # framebuffer, so scrolling text is never upside down regardless of how the
     # Pi+Sense HAT is physically mounted. auto_rotate=True means orientation_loop
-    # (IMU-driven) owns `rotation`; a POST /state {"rotation": N} or
-    # PORCHLIGHT_ROTATION env var pins it and sets auto_rotate=False until a
-    # POST /state {"rotation": "auto"} re-enables tracking.
-    "rotation": 0,
+    # (IMU-driven) owns `rotation`; a POST /state {"rotation": N}, a joystick
+    # direction long-press, or the PORCHLIGHT_ROTATION env var pins it and sets
+    # auto_rotate=False until a POST /state {"rotation": "auto"} or a joystick
+    # center long-press re-enables tracking. rotation_source records who owns
+    # the current value: "auto" (IMU) | "joystick" (long-press, persisted to
+    # disk) | "api" (POST /state) | "env" (PORCHLIGHT_ROTATION at startup).
+    "rotation": DEFAULT_ROTATION,
     "auto_rotate": True,
+    "rotation_source": "auto",
+    # flash_frame/flash_until: a brief (CONFIRMATION_FLASH_SEC) overlay shown
+    # by render_loop instead of the normal frame_for_state() output -- used to
+    # confirm a joystick long-press calibration visually. flash_frame is a raw
+    # (pre-rotation) 64-pixel frame, rotated through the SAME _rotate_frame()
+    # call as every other frame.
+    "flash_frame": None,
+    "flash_until": 0.0,
 }
 _last_post_at = time.time()
 
@@ -489,6 +730,7 @@ class LampHandler(BaseHTTPRequestHandler):
                 current = _state["target"]
                 rotation = _state["rotation"]
                 auto_rotate = _state["auto_rotate"]
+                rotation_source = _state["rotation_source"]
             self._json_response(
                 200,
                 {
@@ -496,6 +738,7 @@ class LampHandler(BaseHTTPRequestHandler):
                     "state": current,
                     "rotation": rotation,
                     "auto_rotate": auto_rotate,
+                    "rotation_source": rotation_source,
                 },
             )
             return
@@ -569,9 +812,11 @@ class LampHandler(BaseHTTPRequestHandler):
                 _last_post_at = time.time()
             if rotation == "auto":
                 _state["auto_rotate"] = True
+                _state["rotation_source"] = "auto"
             elif rotation is not None:
                 _state["rotation"] = rotation
                 _state["auto_rotate"] = False
+                _state["rotation_source"] = "api"
 
         self.send_response(200)
         self.end_headers()
@@ -587,10 +832,19 @@ def render_loop(matrix):
             target = _state["target"]
             name = _state["name"]
             rotation = _state["rotation"]
-        t = time.time() - start
-        # Same frame_for_state() dispatch a joystick nudge and --selftest both use --
-        # one source of truth for "what does state X look like."
-        frame = frame_for_state(target, name, t)
+            flash_frame = _state["flash_frame"]
+            flash_until = _state["flash_until"]
+        now = time.time()
+        if flash_frame is not None and now < flash_until:
+            # Joystick long-press confirmation overlay (e.g. an arrow) --
+            # goes through the SAME _rotate_frame() call below as every other
+            # frame, so it ends up pointing at the true rendered "down" per
+            # the freshly-set rotation (see the joystick calibration section).
+            frame = flash_frame
+        else:
+            # Same frame_for_state() dispatch a joystick nudge and --selftest both use --
+            # one source of truth for "what does state X look like."
+            frame = frame_for_state(target, name, now - start)
         frame = _rotate_frame(frame, rotation)
         matrix.draw(_apply_brightness(frame))
         time.sleep(1 / 15)
@@ -613,6 +867,19 @@ EVENT_FMT = "llHHi"
 EVENT_SIZE = struct.calcsize(EVENT_FMT)
 EV_KEY = 1
 KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_ENTER = 103, 108, 105, 106, 28
+
+# Maps a directional key code to the direction name used by
+# _ROTATION_FOR_JOYSTICK_DIRECTION / _ARROW_SHAPES (defined earlier, above
+# orientation_loop) -- placed here, after the KEY_* constants exist, rather
+# than up there, since it's a plain module-level dict literal evaluated at
+# import time (unlike the functions above it, which only look these names up
+# lazily at call time).
+_JOYSTICK_KEY_DIRECTION = {
+    KEY_UP: "up",
+    KEY_DOWN: "down",
+    KEY_LEFT: "left",
+    KEY_RIGHT: "right",
+}
 
 
 def find_joystick_device():
@@ -647,28 +914,27 @@ def _cycle_joystick_state(direction):
 
 
 def joystick_loop(dev_path):
-    # Center press (KEY_ENTER) keeps its pre-existing behavior UNTOUCHED -- it still
-    # only sets joystick_pressed, which the bridge polls via GET /joystick to raise
-    # the family alert. Up/down/left/right are repurposed here (Task 3) to drive the
-    # local demo-mode cycle instead of the alert flag.
-    global _last_post_at
+    # Short press (< LONG_PRESS_SEC) keeps the pre-existing behavior UNTOUCHED
+    # (03-IMU-FIX Task 3 contract preserved) -- center sets joystick_pressed
+    # (the family-alert flag), up/down/left/right drive the local demo-mode
+    # cycle. A NEW long press (>= LONG_PRESS_SEC) on a direction pins manual
+    # rotation for a flat-mounted board; long press on center resets to auto.
+    # Classification only happens at release, via the pure, unit-tested
+    # _process_joystick_event() state machine -- this loop is just I/O glue.
+    press_start = {}
     with open(dev_path, "rb") as f:
         while True:
             data = f.read(EVENT_SIZE)
             if len(data) < EVENT_SIZE:
                 continue
             _, _, ev_type, code, value = struct.unpack(EVENT_FMT, data)
-            if ev_type != EV_KEY or value != 1:
+            if ev_type != EV_KEY:
                 continue
-            if code == KEY_ENTER:
-                with _state_lock:
-                    _state["joystick_pressed"] = True
-            elif code in (KEY_UP, KEY_RIGHT):
-                _cycle_joystick_state(1)
-                _last_post_at = time.time()
-            elif code in (KEY_DOWN, KEY_LEFT):
-                _cycle_joystick_state(-1)
-                _last_post_at = time.time()
+            kind = _process_joystick_event(press_start, code, value, time.time())
+            if kind == "long":
+                _handle_joystick_long_press(code)
+            elif kind == "short":
+                _handle_joystick_short_press(code)
 
 
 def run_selftest():
@@ -697,12 +963,27 @@ def main():
     if "--selftest" in sys.argv:
         sys.exit(run_selftest())
 
+    # Startup rotation priority: PORCHLIGHT_ROTATION env var (explicit,
+    # demo-night escape hatch) beats a persisted joystick calibration, which
+    # beats the DEFAULT_ROTATION/auto-rotate fallback.
     env_rotation = _rotation_from_env()
     if env_rotation is not None:
         with _state_lock:
             _state["rotation"] = env_rotation
             _state["auto_rotate"] = False
+            _state["rotation_source"] = "env"
         print(f"lamp.py: PORCHLIGHT_ROTATION pinned rotation to {env_rotation}", file=sys.stderr)
+    else:
+        persisted_rotation = _load_persisted_rotation()
+        if persisted_rotation is not None:
+            with _state_lock:
+                _state["rotation"] = persisted_rotation
+                _state["auto_rotate"] = False
+                _state["rotation_source"] = "joystick"
+            print(
+                f"lamp.py: loaded persisted joystick rotation {persisted_rotation} from {ROTATION_PERSIST_PATH}",
+                file=sys.stderr,
+            )
 
     fb_path = find_fb_device()
     matrix = Matrix(fb_path)

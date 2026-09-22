@@ -13,6 +13,7 @@ reintroduces a real `sense_hat` import.
 """
 import os
 import sys
+import tempfile
 import types
 import unittest
 from unittest import mock
@@ -162,6 +163,211 @@ class OrientationMappingTests(unittest.TestCase):
             lamp._rotation_from_gravity(-0.9, 0.0, 0.1),
             lamp.ROTATION_FOR_NEGATIVE_X,
         )
+
+
+class ShortAxisMappingFixTests(unittest.TestCase):
+    """03-IMU-FIX: physical tilt test found the two SHORT-axis (X) tilts --
+    ethernet edge left/right -- were 180 degrees wrong; the two LONG-axis (Y)
+    tilts -- ethernet edge up/down -- were already correct. Assert the actual
+    literal values (not just "matches its own constant", which the
+    pre-existing OrientationMappingTests checks and would pass regardless of
+    what the constants are set to)."""
+
+    def test_short_axis_x_constants_are_the_180_shifted_values(self):
+        self.assertEqual(lamp.ROTATION_FOR_POSITIVE_X, 270)
+        self.assertEqual(lamp.ROTATION_FOR_NEGATIVE_X, 90)
+
+    def test_long_axis_y_constants_are_unchanged_from_before_the_fix(self):
+        self.assertEqual(lamp.ROTATION_FOR_POSITIVE_Y, 0)
+        self.assertEqual(lamp.ROTATION_FOR_NEGATIVE_Y, 180)
+
+    def test_default_rotation_constant_matches_the_confirmed_flat_orientation(self):
+        # Confirmed empirically: flat with the joystick nub bottom-right from
+        # the viewer needs rotation=180 for upright text. Checks the constant
+        # itself (not the shared, mutable `_state["rotation"]`, which other
+        # test classes in this shared-global-state suite legitimately change).
+        self.assertEqual(lamp.DEFAULT_ROTATION, 180)
+
+
+class LongPressTimingTests(unittest.TestCase):
+    """_process_joystick_event: pure press/release state machine, no I/O --
+    exercises the long-press timing logic without a real evdev device or a
+    real time.sleep."""
+
+    def test_release_before_threshold_is_short(self):
+        press_start = {}
+        self.assertIsNone(lamp._process_joystick_event(press_start, lamp.KEY_UP, 1, 100.0))
+        result = lamp._process_joystick_event(press_start, lamp.KEY_UP, 0, 100.5)
+        self.assertEqual(result, "short")
+
+    def test_release_at_exactly_the_threshold_is_long(self):
+        # started=0.0 so `now - started` is exactly LONG_PRESS_SEC's own float
+        # value, not a value computed by adding it to a large base timestamp
+        # (which would lose the last bit or two to floating-point rounding).
+        press_start = {}
+        lamp._process_joystick_event(press_start, lamp.KEY_UP, 1, 0.0)
+        result = lamp._process_joystick_event(press_start, lamp.KEY_UP, 0, lamp.LONG_PRESS_SEC)
+        self.assertEqual(result, "long")
+
+    def test_release_well_past_the_threshold_is_long(self):
+        press_start = {}
+        lamp._process_joystick_event(press_start, lamp.KEY_ENTER, 1, 0.0)
+        result = lamp._process_joystick_event(press_start, lamp.KEY_ENTER, 0, 5.0)
+        self.assertEqual(result, "long")
+
+    def test_release_with_no_matching_press_is_ignored(self):
+        press_start = {}
+        self.assertIsNone(lamp._process_joystick_event(press_start, lamp.KEY_UP, 0, 100.0))
+
+    def test_press_event_returns_none_and_records_start_time(self):
+        press_start = {}
+        self.assertIsNone(lamp._process_joystick_event(press_start, lamp.KEY_LEFT, 1, 42.0))
+        self.assertEqual(press_start[lamp.KEY_LEFT], 42.0)
+
+    def test_unrelated_key_codes_are_ignored(self):
+        press_start = {}
+        self.assertIsNone(lamp._process_joystick_event(press_start, 999, 1, 100.0))
+        self.assertIsNone(lamp._process_joystick_event(press_start, 999, 0, 100.0))
+
+    def test_autorepeat_events_are_ignored(self):
+        press_start = {}
+        lamp._process_joystick_event(press_start, lamp.KEY_UP, 1, 0.0)
+        self.assertIsNone(lamp._process_joystick_event(press_start, lamp.KEY_UP, 2, 0.5))
+        # The original press is still tracked -- a later real release still classifies.
+        self.assertEqual(lamp._process_joystick_event(press_start, lamp.KEY_UP, 0, 2.0), "long")
+
+
+class RotationPersistenceTests(unittest.TestCase):
+    """POST-less, on-disk round trip of a joystick-calibrated rotation --
+    /home/pi/porchlight/rotation.json is not writable/readable on this dev
+    machine, so ROTATION_PERSIST_PATH is patched to a tempdir for every test."""
+
+    def test_save_then_load_round_trips(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "rotation.json")
+            with mock.patch.object(lamp, "ROTATION_PERSIST_PATH", path):
+                lamp._save_rotation(270)
+                self.assertEqual(lamp._load_persisted_rotation(), 270)
+
+    def test_missing_file_returns_none(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "does-not-exist.json")
+            with mock.patch.object(lamp, "ROTATION_PERSIST_PATH", path):
+                self.assertIsNone(lamp._load_persisted_rotation())
+
+    def test_clear_removes_the_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "rotation.json")
+            with mock.patch.object(lamp, "ROTATION_PERSIST_PATH", path):
+                lamp._save_rotation(90)
+                lamp._clear_persisted_rotation()
+                self.assertIsNone(lamp._load_persisted_rotation())
+
+    def test_clear_is_a_no_op_when_no_file_exists(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "rotation.json")
+            with mock.patch.object(lamp, "ROTATION_PERSIST_PATH", path):
+                lamp._clear_persisted_rotation()  # must not raise
+
+    def test_corrupt_json_returns_none(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "rotation.json")
+            with open(path, "w") as f:
+                f.write("not json{{{")
+            with mock.patch.object(lamp, "ROTATION_PERSIST_PATH", path):
+                self.assertIsNone(lamp._load_persisted_rotation())
+
+    def test_out_of_range_rotation_value_returns_none(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "rotation.json")
+            with open(path, "w") as f:
+                f.write('{"rotation": 45}')
+            with mock.patch.object(lamp, "ROTATION_PERSIST_PATH", path):
+                self.assertIsNone(lamp._load_persisted_rotation())
+
+
+class JoystickCalibrationTests(unittest.TestCase):
+    """Long-press direction handling: sets manual rotation so the pressed
+    direction becomes the bottom of the text, disables auto_rotate, persists
+    to disk, and flashes a confirmation; center long-press resets to auto and
+    clears any persisted file."""
+
+    def setUp(self):
+        lamp._state["auto_rotate"] = True
+        lamp._state["rotation"] = lamp.DEFAULT_ROTATION
+        lamp._state["rotation_source"] = "auto"
+        lamp._state["flash_frame"] = None
+        lamp._state["flash_until"] = 0.0
+
+    def test_direction_to_rotation_mapping(self):
+        # Derived so that after _rotate_frame(rotation) is applied, the native
+        # edge matching the pressed direction ends up at the OUTPUT's bottom
+        # row -- i.e. "down, toward the viewer" (README.md has the full
+        # grid-math derivation).
+        self.assertEqual(lamp._ROTATION_FOR_JOYSTICK_DIRECTION["down"], 0)
+        self.assertEqual(lamp._ROTATION_FOR_JOYSTICK_DIRECTION["right"], 90)
+        self.assertEqual(lamp._ROTATION_FOR_JOYSTICK_DIRECTION["up"], 180)
+        self.assertEqual(lamp._ROTATION_FOR_JOYSTICK_DIRECTION["left"], 270)
+
+    def test_long_press_left_sets_manual_rotation_disables_auto_and_persists(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "rotation.json")
+            with mock.patch.object(lamp, "ROTATION_PERSIST_PATH", path):
+                lamp._handle_joystick_long_press(lamp.KEY_LEFT)
+                self.assertEqual(lamp._state["rotation"], 270)
+                self.assertFalse(lamp._state["auto_rotate"])
+                self.assertEqual(lamp._state["rotation_source"], "joystick")
+                self.assertEqual(lamp._load_persisted_rotation(), 270)
+                self.assertIsNotNone(lamp._state["flash_frame"])
+                self.assertGreater(lamp._state["flash_until"], 0.0)
+
+    def test_center_long_press_resets_to_auto_and_clears_persisted_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "rotation.json")
+            with mock.patch.object(lamp, "ROTATION_PERSIST_PATH", path):
+                lamp._save_rotation(90)
+                lamp._state["auto_rotate"] = False
+                lamp._state["rotation_source"] = "joystick"
+                lamp._handle_joystick_long_press(lamp.KEY_ENTER)
+                self.assertTrue(lamp._state["auto_rotate"])
+                self.assertEqual(lamp._state["rotation_source"], "auto")
+                self.assertIsNone(lamp._load_persisted_rotation())
+
+
+class ShortPressParityTests(unittest.TestCase):
+    """Confirms the short-press/long-press refactor kept the pre-existing
+    short-press behavior byte-for-byte identical (T-03 acceptance, extended)."""
+
+    def setUp(self):
+        lamp._state["target"] = "idle"
+        lamp._state["name"] = None
+        lamp._state["joystick_pressed"] = False
+
+    def test_center_short_press_sets_the_one_shot_alert_flag(self):
+        lamp._handle_joystick_short_press(lamp.KEY_ENTER)
+        self.assertTrue(lamp._state["joystick_pressed"])
+
+    def test_up_short_press_cycles_the_demo_state_forward(self):
+        lamp._handle_joystick_short_press(lamp.KEY_UP)
+        self.assertEqual(lamp._state["target"], lamp.DEMO_CYCLE_STATES[1])
+
+    def test_down_short_press_cycles_the_demo_state_backward(self):
+        lamp._handle_joystick_short_press(lamp.KEY_DOWN)
+        self.assertEqual(lamp._state["target"], lamp.DEMO_CYCLE_STATES[-1])
+
+
+class ConfirmationFrameTests(unittest.TestCase):
+    def test_arrow_frames_are_a_full_64_pixel_frame_for_every_direction(self):
+        for direction in ("up", "down", "left", "right"):
+            self.assertEqual(len(lamp._arrow_frame(direction)), 64)
+
+    def test_auto_reset_icon_is_a_full_64_pixel_frame(self):
+        self.assertEqual(len(lamp._static_glyph_frame("A")), 64)
+
+
+class HealthRotationSourceFieldTests(unittest.TestCase):
+    def test_state_dict_has_a_rotation_source_key(self):
+        self.assertIn("rotation_source", lamp._state)
 
 
 class RotationEnvOverrideTests(unittest.TestCase):
