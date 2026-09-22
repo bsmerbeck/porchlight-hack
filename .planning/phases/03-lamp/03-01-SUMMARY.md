@@ -9,13 +9,13 @@ provides:
   - "pi/lamp.py: stdlib-only HTTP service (GET /health, GET /joystick, POST /state) rendering idle/screening/verifying/verified/scam states on the Sense HAT LED matrix"
   - "Watchdog thread reverting to idle after 60s of POST silence, independent of bridge health"
   - "Joystick read-and-clear endpoint discovering the Sense HAT joystick by name via raw evdev"
-  - "pi/porchlight-lamp.service and pi/deploy.sh (systemd unit + deploy script), not yet successfully installed on the Pi — blocked on a sudo authentication gate"
+  - "pi/porchlight-lamp.service and pi/deploy.sh (systemd unit + deploy script), installed and enabled on the Pi; confirmed to survive `sudo reboot` with zero manual steps"
 affects: [03-lamp plan 02 (Mac bridge), Phase 4 dashboard/joystick alert consumption]
 
 actuals:
-  tokens: 4545
-  tasks: 3
-  commits: 4
+  tokens: 5800
+  tasks: 4
+  commits: 7
 plan_head_before: 83d871a767d8cd8afa616bc6253c64a0fdae9f19
 
 tech-stack:
@@ -38,8 +38,9 @@ key-decisions:
   - "Glyph rows are top-aligned (rows 0-4) rather than vertically centered, so every 8-pixel-wide slice of the scrolling text always carries live scroll data — verified this matters for automated fb-byte-diff checks that only sample the first row."
   - "Screening/verifying breathing period set to 1.2s per PLAN.md's explicit action text (not the 1.0s '~1Hz' figure in the dispatch summary), since PLAN.md is the authoritative, more specific source for this plan."
   - "Manual `nohup python3 lamp.py &` used to run and verify the service live on the Pi ahead of Task 4's systemd install, since Tasks 2-3 needed to prove behavior on real hardware before the deploy script existed."
+  - "deploy.sh's health check retries for up to 10s instead of a single curl immediately after `systemctl enable --now`, since the real install showed systemd reporting `active` a beat before the HTTP server had actually finished binding — a single-shot check was a false negative waiting to happen on demo night."
 
-requirements-completed: [LAMP-01, LAMP-04]
+requirements-completed: [LAMP-01, LAMP-03, LAMP-04]
 
 coverage:
   - id: D1
@@ -77,31 +78,44 @@ coverage:
   - id: D4
     description: "systemd unit installed and enabled on the Pi; service survives a `sudo reboot` and returns to idle with zero manual steps"
     requirement: LAMP-03
-    verification: []
-    human_judgment: true
-    rationale: "BLOCKED — deploy.sh's scp step succeeded, but the `sudo systemctl daemon-reload && sudo systemctl enable --now porchlight-lamp.service` step failed: `sudo -n true` on the Pi returns 'sudo: a password is required' even with a pty allocated, contradicting the 'passwordless sudo already enabled' fact given for this session. This is an authentication gate (see Authentication Gates below), not a code bug — the systemd unit and deploy script content are correct and unit-tested by inspection, but end-to-end install + reboot-survival was never actually run. Requires a human to either enter the sudo password once interactively or add a NOPASSWD sudoers entry for `pi`."
+    verification:
+      - kind: manual_procedural
+        ref: "Human resolved the sudo gate (added /etc/sudoers.d/010_pi-nopasswd); `ssh pi@169.254.10.2 sudo -n true` confirmed passwordless. Killed the manual nohup lamp.py process (PID 2311) and confirmed port 8080 free before install."
+        status: pass
+      - kind: manual_procedural
+        ref: "bash pi/deploy.sh -> scp succeeded, systemd unit installed/enabled, health check passed (exit 0); `systemctl is-active porchlight-lamp.service` -> active; `systemctl is-enabled` -> enabled"
+        status: pass
+      - kind: manual_procedural
+        ref: "ssh pi@169.254.10.2 sudo reboot; polled GET /health every 5s from the Mac -> answered {\"ok\": true, \"state\": \"idle\"} within ~55-60s, zero manual steps on the Pi. uptime confirmed a genuine reboot (up 1 min)."
+        status: pass
+      - kind: manual_procedural
+        ref: "journalctl -u porchlight-lamp.service -b showed the documented recovery path: first two boot-time start attempts fail with OSError [Errno 99] (169.254.10.2 not yet assigned to eth0), Restart=always/RestartSec=2 retries, 3rd attempt binds successfully ~5s after boot"
+        status: pass
+    human_judgment: false
+    rationale: "Byte-level fb0 diffs aren't relevant here — this is a process-lifecycle claim (systemd install + reboot survival), fully provable by `systemctl is-active`/`is-enabled` and a real `sudo reboot` + health-poll cycle, all executed against the real Pi."
 
-duration: 55min
+duration: 70min
 completed: 2026-09-21
-status: halted
+status: complete
 ---
 
 # Phase 3 Plan 1: Porchlight Lamp Service Summary
 
-Stdlib-only Python HTTP service on the Raspberry Pi renders idle/screening/verifying/verified/scam states as live Sense-HAT LED-matrix animations, watches a 60-second POST watchdog, and exposes a read-and-clear joystick endpoint — all verified against real hardware; only the systemd install + reboot-survival step (Task 4) is blocked on a sudo authentication gate discovered live on the Pi.
+Stdlib-only Python HTTP service on the Raspberry Pi renders idle/screening/verifying/verified/scam states as live Sense-HAT LED-matrix animations, watches a 60-second POST watchdog, and exposes a read-and-clear joystick endpoint; the systemd unit is installed, enabled, and confirmed to survive a real `sudo reboot` with zero manual steps — all verified against real hardware.
 
 ## Performance
 
-- **Duration:** 55 min
+- **Duration:** 70 min (55 min initial session + 15 min continuation after the sudo gate was resolved)
 - **Started:** 2026-09-22T01:36:00Z
-- **Completed:** 2026-09-22T02:31:00Z (halted at Task 4's deploy step)
-- **Tasks:** 3 of 4 completed (Task 4 partially done — files created, install blocked)
+- **Completed:** 2026-09-22T02:46:00Z
+- **Tasks:** 4 of 4 completed
 - **Files modified:** 4 (`pi/lamp.py`, `pi/porchlight-lamp.service`, `pi/deploy.sh`, `pi/README.md`)
 
 ## Accomplishments
 - `pi/lamp.py` is a complete, dependency-free (stdlib-only) HTTP service that discovers the Sense HAT framebuffer and joystick by name, renders four distinct live animations (amber breathe, blue breathe, green scroll, red/black flash) at ~15fps in a dedicated render thread, validates all POST input (400 on bad JSON/unknown state), and runs a 1-second-tick watchdog that force-reverts to idle after 60s of POST silence.
-- Every behavioral claim in `must_haves.truths` for Tasks 1-3 was verified against the real Pi over SSH — not just unit-tested code, actual `/dev/fb0` byte reads before/after each state transition.
-- `pi/porchlight-lamp.service` and `pi/deploy.sh` are written and ready to install; the deploy script's `scp` step succeeded live against the Pi.
+- Every behavioral claim in `must_haves.truths` was verified against the real Pi over SSH — not just unit-tested code, actual `/dev/fb0` byte reads before/after each state transition, and a real `sudo reboot`.
+- `pi/porchlight-lamp.service` is installed and enabled on the Pi; `pi/deploy.sh` runs scp + systemd install + a retrying health check end-to-end and exits 0.
+- Reboot survival is proven, not assumed: `sudo reboot` was actually run, and `GET /health` came back `{"ok": true, "state": "idle"}` within ~60s with zero manual steps, confirming LAMP-03.
 
 ## Task Commits
 
@@ -110,15 +124,16 @@ Each task was committed atomically:
 1. **Task 1: Confirm hardware access** - `b0ff9c5` (docs)
 2. **Task 2: lamp.py tracer — HTTP server, idle glow, scam-red end-to-end** - `07bd258` (feat)
 3. **Task 3: Full state renderer — animations, joystick, watchdog** - `1d88b99` (feat)
-4. **Task 4 (partial): systemd unit + deploy script (deploy blocked on sudo)** - `17a4b4e` (chore)
-
-_No metadata commit yet — this plan is `status: halted`, not complete; the orchestrator/human resolves the sudo blocker before a continuation agent finishes Task 4 and closes out the plan._
+4. **Task 4: systemd unit + deploy script** - `17a4b4e` (chore, files only — install blocked on sudo at the time)
+5. **Halt checkpoint doc** - `efce3d4` (docs)
+6. **Merge into main (tasks 1-3, systemd pending)** - `35e1b2e` (merge)
+7. **Task 4 continuation: fix deploy.sh health-check race, prove reboot survival** - `31092cc` (fix)
 
 ## Files Created/Modified
 - `pi/lamp.py` - HTTP server (`/health`, `/joystick`, `/state`), render/watchdog/joystick daemon threads, RGB565 framebuffer writer, 3x5 glyph scroller
-- `pi/porchlight-lamp.service` - systemd unit (`Restart=always`, `RestartSec=2`, `User=pi`)
-- `pi/deploy.sh` - scp + ssh install/enable/health-check script (scp step verified working; systemctl step blocked)
-- `pi/README.md` - Hardware Discovery section (fb0/joystick/struct-size/write-smoke-test results), Deploy section, manual curl state-check runbook
+- `pi/porchlight-lamp.service` - systemd unit (`Restart=always`, `RestartSec=2`, `User=pi`) — installed and enabled on the Pi
+- `pi/deploy.sh` - scp + ssh install/enable/health-check script; health check now retries up to 10s (was a single-shot race against systemd startup)
+- `pi/README.md` - Hardware Discovery section, Deploy section, manual curl state-check runbook, and a Reboot survival note documenting the observed bind-retry recovery in `journalctl`
 
 ## Decisions Made
 - Top-aligned the scrolling glyph rows (not vertically centered) so any 8-pixel window of the scroll always contains live glyph data — matters both for visual scroll-detectability and for automated fb-byte-diff verification that only samples a handful of leading bytes.
@@ -137,30 +152,37 @@ _No metadata commit yet — this plan is `status: halted`, not complete; the orc
 - **Verification:** Two `/dev/fb0` reads 300ms apart during `verified` state showed different bytes (`83 02 2c 63...` -> `2c 63 83 02...`).
 - **Committed in:** `1d88b99`
 
+**2. [Rule 1 - Bug] `deploy.sh`'s health check raced systemd startup**
+- **Found during:** Task 4 continuation, first real end-to-end deploy run
+- **Issue:** `systemctl enable --now` returns as soon as the unit is scheduled, but `deploy.sh` immediately ran a single `curl -sf /health` right after — the Python process hadn't finished importing/binding yet, so the very first live deploy printed `FAIL` even though the service came up correctly a moment later (confirmed `active` on inspection).
+- **Fix:** Retry the health curl up to 10 times with a 1s sleep and a 2s per-attempt timeout before declaring failure.
+- **Files modified:** `pi/deploy.sh`
+- **Verification:** Re-ran `bash pi/deploy.sh` after the fix — exited 0 with `PASS` on the first successful curl.
+- **Committed in:** `31092cc`
+
 ---
 
-**Total deviations:** 1 auto-fixed (Rule 1 — rendering-layout bug that would have broken the plan's own automated verification). **Impact:** No scope creep; a small layout choice made specifically so the plan's stated verification method actually exercises the feature it's meant to prove.
+**Total deviations:** 2 auto-fixed (Rule 1 — one rendering-layout bug, one deploy-script race condition, both auto-fixed and re-verified against real hardware). **Impact:** No scope creep; both fixes were required for the plan's own verification/acceptance criteria to hold true against live behavior.
 
 ## Issues Encountered
 
-**Task 4 blocked by a sudo authentication gate.** `deploy.sh`'s `scp -r pi/ pi@169.254.10.2:/home/pi/porchlight/` step completed successfully, but the subsequent `ssh pi@169.254.10.2 'sudo systemctl daemon-reload && sudo systemctl enable --now porchlight-lamp.service'` step failed. Diagnosis: `sudo -n true` on the Pi returns `sudo: a password is required` even with a pty allocated (`ssh -t`) — this contradicts the "passwordless sudo already enabled" fact provided for this session. `ls -la /etc/sudoers.d/` (readable, world-executable directory) shows only distro-default files (`010_at-export`, `010_dpkg-threads`, `010_global-tty`, `010_proxy`, `README`) — no `pi`-specific `NOPASSWD` entry exists on this image. This is treated as an authentication gate per the executor's auth-gate protocol (not a code bug, not auto-fixable, and explicitly excluded from credential-guessing per this session's tooling policy) — resolution requires a human with either the Pi's login password or physical/console access to the Pi.
+**Resolved: sudo authentication gate.** The initial session halted because `sudo -n true` on the Pi returned `sudo: a password is required`, contradicting the "passwordless sudo already enabled" fact given for that session. The human resolved this out-of-band by adding `/etc/sudoers.d/010_pi-nopasswd`. This continuation confirmed the fix (`ssh pi@169.254.10.2 sudo -n true` now succeeds with no prompt) before proceeding — no credential-guessing or self-recovery was attempted, matching the executor's auth-gate protocol from the original halt.
 
-**Resolution options for the human:**
-1. SSH in interactively from a real terminal (`ssh pi@169.254.10.2`) and run `sudo visudo` (entering the account password once when prompted) to add: `pi ALL=(ALL) NOPASSWD: ALL` — then passwordless sudo works for all future automated sessions, matching the originally-stated fact.
-2. Or, if the password is known, run `bash pi/deploy.sh` from a real interactive terminal (not over this automated session) and type the sudo password when prompted — this installs the service once; NOPASSWD is still recommended for the actual demo night so a bridge/lamp restart never blocks on a password prompt.
-3. Once either is done, a continuation agent (or the human) re-runs `bash pi/deploy.sh` and Task 4's `<verify>` block (deploy, confirm `active`, `sudo reboot`, poll `/health` for ~90s) to close out this plan.
+**Pre-install cleanup:** A manually-started `nohup python3 lamp.py &` process (PID 2311, left running from Tasks 2-3's live verification) was still bound to port 8080. Killed it by PID (`kill 2311`, not `pkill -f lamp.py` — the latter matched the SSH command's own argument string and killed the SSH session instead) and confirmed no listener on 8080 before running `deploy.sh`, so the systemd-managed process would own the port cleanly.
 
-**Current live state:** `pi/lamp.py` (Task 3's full version) is currently running on the Pi via a manually-started `nohup python3 /home/pi/porchlight/pi/lamp.py &` process (PID visible via `ssh pi@169.254.10.2 ps aux | grep lamp.py`), NOT yet via systemd. It will keep answering `http://169.254.10.2:8080/health` etc. for demo/manual testing purposes, but will NOT survive a reboot or crash until Task 4 completes — Plan 02 (the Mac bridge) can be developed and tested against it in the meantime.
+**Deploy race condition (see Deviations #2):** The first live `bash pi/deploy.sh` run reported `FAIL` on its health check even though the service was actually `active` a moment later — fixed by retrying the health curl for up to 10s.
+
+**Reboot-survival evidence:** `sudo reboot` was run for real; `GET /health` was polled from the Mac every 5s and answered within ~55-60s. `journalctl -u porchlight-lamp.service -b` showed two failed start attempts (`OSError: [Errno 99] Cannot assign requested address` — `eth0`'s static IP wasn't up yet) before `Restart=always`/`RestartSec=2` succeeded on the 3rd attempt, exactly matching the recovery behavior `lamp.py`'s own bind comment anticipates. No unit/deploy-script changes were needed for this — it self-healed as designed.
 
 ## User Setup Required
 
-**A human needs to unblock sudo on the Pi before Task 4 can complete.** See "Issues Encountered" above for the exact resolution steps. No `{phase}-USER-SETUP.md` was generated (this is a same-session hardware credential gap, not an external SaaS/service setup), but the same information is captured here for the resuming agent/human.
+None remaining. The sudo gate that previously required human action is resolved and verified.
 
 ## Next Phase Readiness
 
-**Ready:** `pi/lamp.py`'s full HTTP contract (`POST /state`, `GET /health`, `GET /joystick`) is live and verified on the real Pi at `169.254.10.2:8080` right now (via the manual process) — Plan 02's Mac-side bridge can be built and tested against it immediately, with no dependency on Task 4 completing first.
+**Ready:** `pi/lamp.py`'s full HTTP contract (`POST /state`, `GET /health`, `GET /joystick`) is live on the real Pi at `169.254.10.2:8080`, now running under systemd (`porchlight-lamp.service`, enabled, `Restart=always`) rather than the earlier manual `nohup` process. Confirmed to come back up automatically after a real `sudo reboot`. Plan 02's Mac-side bridge can be built and tested against it with no outstanding blockers.
 
-**Blocked:** Task 4 (systemd install + reboot-survival, part of LAMP-03) needs the sudo gate resolved by a human before it can be verified and this plan closed out as `status: complete`. `LAMP-03` is NOT marked complete in this SUMMARY's `requirements-completed` for that reason — only `LAMP-01` and `LAMP-04` are.
+**Complete:** All four tasks are done and verified against real hardware. `LAMP-01`, `LAMP-03`, and `LAMP-04` are all satisfied — `LAMP-03` (reboot/crash survival) is now proven, not just written.
 
 ## Self-Check: PASSED
 
@@ -172,8 +194,12 @@ _No metadata commit yet — this plan is `status: halted`, not complete; the orc
 - Commit `07bd258` exists: FOUND
 - Commit `1d88b99` exists: FOUND
 - Commit `17a4b4e` exists: FOUND
-- Live service responds: `curl http://169.254.10.2:8080/health` → `{"ok": true, "state": "idle"}` (manual process, pre-systemd)
+- Commit `efce3d4` exists: FOUND
+- Commit `35e1b2e` exists: FOUND
+- Commit `31092cc` exists: FOUND
+- Live service responds via systemd (not manual process): `curl http://169.254.10.2:8080/health` → `{"ok": true, "state": "idle"}`; `systemctl is-active porchlight-lamp.service` → `active`; `systemctl is-enabled` → `enabled`
+- Reboot survival: `sudo reboot` run for real; `/health` answered within ~60s with zero manual steps; `uptime` confirmed genuine reboot
 
 ---
 *Phase: 03-lamp*
-*Completed: 2026-09-21 (halted — Task 4 blocked on sudo authentication gate)*
+*Completed: 2026-09-21*
