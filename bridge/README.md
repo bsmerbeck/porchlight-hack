@@ -34,6 +34,53 @@ ever fires when the bridge process itself is gone, not merely because nothing ch
   joystick-cycled). It's informational only — the bridge logs it when it changes, but never
   writes it to Firestore and never lets it influence the alert decision.
 
+## Hue (03-HUE)
+
+In addition to the Pi's Sense HAT lamp, the bridge optionally mirrors `lamp/current` onto every
+reachable Philips Hue bulb (`bridge/hue.mjs`), over the same link-local LAN as the Pi -- no
+internet required. This is purely additive: the Pi lamp path is unaffected whether or not Hue is
+configured.
+
+**Setup:** `bridge/hue-local.json` (gitignored, never committed) holds the paired app key:
+
+```json
+{ "ip": "169.254.12.12", "username": "<paired-app-key>" }
+```
+
+If this file is missing, or `HUE_DISABLED=1` is set in the environment, Hue is disabled and the
+bridge logs `hue: disabled` once at startup -- everything else runs exactly as before.
+
+**Re-pairing** (if the app key is lost or revoked): press the physical link button on the Hue
+Bridge, then within 30 seconds:
+
+```bash
+curl -X POST http://169.254.12.12/api -d '{"devicetype":"porchlight#mac"}'
+```
+
+The response's `success.username` is the new app key -- write it into `bridge/hue-local.json`.
+
+**Adding bulbs:** power on any additional Hue bulb already paired to this Hue Bridge (or use the
+Hue app to pair a new one) -- it appears as `reachable: true` in `GET /api/<user>/lights` with no
+bridge restart needed, since `bridge/hue.mjs` always targets Hue's built-in "all lights" group
+(`groups/0/action`) rather than an explicit list of light IDs.
+
+**State -> color mapping** (Hue v1 REST units: `hue` 0-65535, `sat` 0-254, `bri` 1-254):
+
+| `lamp/current` state | Color | Effect |
+| --- | --- | --- |
+| `idle` / `ended` | warm amber (`hue:8000 sat:200 bri:120`) | solid |
+| `screening` / `verifying` | blue (`hue:46000 sat:254`) | breathing: alternates `bri` 200/90 every 1.5s |
+| `verified` | green (`hue:25500 sat:254 bri:254`) | solid |
+| `scam` | red (`hue:0 sat:254 bri:254`) | `alert:"lselect"` flash, re-asserted every 15s |
+
+The breathing effect is a manual `bri` alternation rather than Hue's built-in `alert:"lselect"` --
+`lselect` reads as a sharp on/off blink, which felt too alarming for "we're screening this call."
+`scam` uses `lselect` on purpose, since a scam call *should* read as urgent.
+
+Hue state is re-asserted on the same 20s heartbeat cadence as the Pi's `/state` POST (see above),
+so a bulb that misses one request (Wi-Fi/LAN blip, Hue Bridge busy) re-syncs automatically on the
+next tick -- no separate watchdog needed on the Hue side.
+
 ## Running it
 
 ```bash
