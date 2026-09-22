@@ -15,6 +15,7 @@ import { startPasskeyAuthentication, answerVerification } from './verification/p
 import { resetDemo } from './demo/resetDemo.js';
 import { writeFamilyReport } from './reports/writeFamilyReport.js';
 import { attackCall } from './attack/attackCall.js';
+import { attackClips } from './demo/attackClips.js';
 
 initializeApp();
 
@@ -49,6 +50,12 @@ export { writeFamilyReport };
 // places a real outbound call, in the consented cloned-voice "Attacker" agent, to the
 // hardcoded Porchlight number only. Owned by functions/src/attack/attackCall.ts.
 export { attackCall };
+// Phase 5 (05-CLIPS): ATK-01 fallback -- the conversational "Attacker" agent is blocked
+// by ElevenLabs' vendor-side moderation, so attackClips generates the same attack script
+// as plain Text-to-Speech clips in the consented cloned voice, played back by an
+// "Attacker soundboard" on /sim instead of a live agent call. Owned by
+// functions/src/demo/attackClips.ts.
+export { attackClips };
 
 export const joinWaitlist = onCall({ region: REGION, cors: true, maxInstances: 5 }, async (req) => {
   const parsed = WaitlistPayload.safeParse(req.data);

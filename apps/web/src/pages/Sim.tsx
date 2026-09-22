@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
-import { JAIL_SCRIPT, type CallDoc, type Tactic } from '@porchlight/shared';
+import { useEffect, useRef, useState } from 'react';
+import { ATTACK_LINES, JAIL_SCRIPT, type CallDoc, type Tactic } from '@porchlight/shared';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 
 type RunStatus = 'idle' | 'running' | 'done' | 'error';
+type ClipStatus = 'idle' | 'loading' | 'playing' | 'ready' | 'error';
 
 const DEMO_TOKEN_STORAGE_KEY = 'porchlight_demo_token';
 
@@ -40,6 +41,10 @@ export default function Sim() {
   const [callDoc, setCallDoc] = useState<CallDoc | null>(null);
   const [attackStatus, setAttackStatus] = useState<RunStatus>('idle');
   const [attackError, setAttackError] = useState<string | null>(null);
+  const [clipStatus, setClipStatus] = useState<Record<number, ClipStatus>>({});
+  const [soundboardError, setSoundboardError] = useState<string | null>(null);
+  const [playingAll, setPlayingAll] = useState(false);
+  const clipAudioRef = useRef<Record<number, HTMLAudioElement>>({});
 
   useEffect(() => {
     if (!callId) return;
@@ -131,6 +136,85 @@ export default function Sim() {
     }
   }
 
+  /**
+   * ATK-01 fallback: the ElevenLabs conversational "Attacker" agent is blocked by vendor
+   * moderation, so this fetches (once, then caches per index in clipAudioRef) a single
+   * line's pre-generated cloned-voice clip from `attackClips` and plays it through the
+   * laptop speaker. Reuses the same DEMO_TOKEN localStorage prompt as the attack button.
+   */
+  async function getOrFetchClipAudio(index: number): Promise<HTMLAudioElement> {
+    const cached = clipAudioRef.current[index];
+    if (cached) return cached;
+
+    const token = getDemoToken();
+    if (!token) throw new Error('DEMO_TOKEN required to fetch attack clips');
+
+    const [{ fns }, { httpsCallable }] = await Promise.all([
+      import('@/lib/firebase'),
+      import('firebase/functions'),
+    ]);
+
+    const attackClips = httpsCallable<
+      { token: string; index: number },
+      { clips: Array<{ index: number; text: string; audioBase64: string }> }
+    >(fns, 'attackClips');
+    const { data } = await attackClips({ token, index });
+    const clip = data.clips[0];
+
+    const audio = new Audio(`data:audio/mpeg;base64,${clip.audioBase64}`);
+    clipAudioRef.current[index] = audio;
+    return audio;
+  }
+
+  function playAudioElement(audio: HTMLAudioElement): Promise<void> {
+    return new Promise((resolve, reject) => {
+      audio.currentTime = 0;
+      audio.onended = () => resolve();
+      audio.onerror = () => reject(new Error('Audio playback failed'));
+      void audio.play().catch(reject);
+    });
+  }
+
+  async function handlePlayLine(index: number) {
+    setSoundboardError(null);
+    setClipStatus((s) => ({ ...s, [index]: 'loading' }));
+
+    try {
+      const audio = await getOrFetchClipAudio(index);
+      setClipStatus((s) => ({ ...s, [index]: 'playing' }));
+      await playAudioElement(audio);
+      setClipStatus((s) => ({ ...s, [index]: 'ready' }));
+    } catch (err) {
+      console.error('Sim: failed to play attack clip', index, err);
+      setSoundboardError('Something went wrong playing that line — check the console.');
+      setClipStatus((s) => ({ ...s, [index]: 'error' }));
+    }
+  }
+
+  async function handlePlayAllClips() {
+    setSoundboardError(null);
+    setPlayingAll(true);
+
+    try {
+      for (let i = 0; i < ATTACK_LINES.length; i++) {
+        setClipStatus((s) => ({ ...s, [i]: 'loading' }));
+        const audio = await getOrFetchClipAudio(i);
+        setClipStatus((s) => ({ ...s, [i]: 'playing' }));
+        await playAudioElement(audio);
+        setClipStatus((s) => ({ ...s, [i]: 'ready' }));
+
+        if (i < ATTACK_LINES.length - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+        }
+      }
+    } catch (err) {
+      console.error('Sim: failed to play attack soundboard', err);
+      setSoundboardError('Something went wrong playing the soundboard — check the console.');
+    } finally {
+      setPlayingAll(false);
+    }
+  }
+
   return (
     <div className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 p-6">
       <div>
@@ -167,6 +251,41 @@ export default function Sim() {
           </p>
         )}
         {attackError && <p className="text-sm text-destructive">{attackError}</p>}
+      </div>
+
+      <div className="flex flex-col gap-2 border-t pt-6">
+        <h2 className="font-semibold">Attacker soundboard (cloned voice)</h2>
+        <p className="text-sm text-muted-foreground">
+          The ElevenLabs conversational "Attacker" agent is blocked by vendor safety
+          moderation ("Agent … is unsafe"), so these five lines are pre-generated as plain
+          Text-to-Speech clips in the same consented cloned voice and played back here
+          instead of a live agent call.
+        </p>
+        <p className="text-xs text-muted-foreground">Hold the calling phone's mic near the speaker.</p>
+
+        <div className="flex flex-col gap-2">
+          {ATTACK_LINES.map((line, i) => (
+            <Button
+              key={i}
+              onClick={() => void handlePlayLine(i)}
+              disabled={playingAll || clipStatus[i] === 'loading' || clipStatus[i] === 'playing'}
+              variant="outline"
+              size="lg"
+              className="h-auto w-full justify-start whitespace-normal text-left"
+            >
+              {i + 1} · {line}
+              {clipStatus[i] === 'loading' && ' (loading…)'}
+              {clipStatus[i] === 'playing' && ' (playing…)'}
+              {clipStatus[i] === 'error' && ' (failed — see console)'}
+            </Button>
+          ))}
+        </div>
+
+        <Button onClick={() => void handlePlayAllClips()} disabled={playingAll} size="lg" className="w-fit">
+          {playingAll ? 'Playing all…' : 'Play all (2s gaps)'}
+        </Button>
+
+        {soundboardError && <p className="text-sm text-destructive">{soundboardError}</p>}
       </div>
 
       {callDoc && (
