@@ -13,8 +13,19 @@ const Verify = lazy(() => import('@/pages/Verify'));
 // 06-A: design-system reference page (all porch components in every state).
 const Styleguide = lazy(() => import('@/pages/Styleguide'));
 
+// Unlisted investor brief; not linked from anywhere.
+const Brief = lazy(() => import('@/pages/Brief'));
+
 function App() {
   const pathname = window.location.pathname.replace(/\/$/, '') || '/';
+
+  if (pathname === '/brief-p7k3') {
+    return (
+      <Suspense fallback={null}>
+        <Brief />
+      </Suspense>
+    );
+  }
 
   if (pathname.startsWith('/app')) {
     return (
