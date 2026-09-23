@@ -7,8 +7,14 @@ import {
   B2B_PRICING,
   BENEFITS,
   BLENDED_ARPU,
+  CITATIONS,
+  citationById,
+  citationNumber,
+  type CitationId,
   COMPS,
   CONSUMER_PRICING,
+  CUSTOMER_FACTS,
+  type Fact,
   FINANCING,
   HEADLINE_STATS,
   HOW_IT_WORKS,
@@ -20,7 +26,7 @@ import {
   type ScenarioKey,
   type ScenarioYear,
   SECTIONS,
-  SOURCES,
+  THREAT_STATS,
   USER,
   VALUATION_M24,
   Y1_SPLIT,
@@ -54,12 +60,79 @@ function Card({ className, children }: { className?: string; children: ReactNode
   return <div className={cn('rounded-2xl border border-border bg-surface p-5 shadow-soft', className)}>{children}</div>;
 }
 
-function Stat({ value, label, className }: { value: string; label: string; className?: string }) {
+// Inline citation: small superscript [n] that opens the source in a new tab.
+// Inline padding enlarges the tap target (~24px) without changing line height.
+function Cite({ ids }: { ids: CitationId[] }) {
+  return (
+    <sup className="ml-0.5 whitespace-nowrap align-baseline text-[0.7em] leading-none">
+      {ids.map((id) => {
+        const c = citationById(id);
+        const n = citationNumber(id);
+        return (
+          <a
+            key={id}
+            href={c.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={`${c.publisher}: ${c.stat}`}
+            aria-label={`Source ${n}: ${c.publisher}, ${c.label}`}
+            className="relative -top-[0.5em] rounded px-[5px] py-[7px] font-semibold text-amber no-underline hover:underline focus-visible:outline-2 focus-visible:outline-amber"
+          >
+            [{n}]
+          </a>
+        );
+      })}
+    </sup>
+  );
+}
+
+// Marks our own forecast / valuation numbers, linking to the Assumptions note instead of a source.
+function Projection() {
+  return (
+    <a
+      href="#assumptions"
+      className="ml-1.5 inline-block rounded-full border border-dashed border-border px-2 align-middle text-xs font-semibold uppercase tracking-wide text-muted-foreground no-underline hover:bg-accent"
+      title="Our projection; see Assumptions"
+    >
+      Projection
+    </a>
+  );
+}
+
+function Stat({
+  value,
+  label,
+  className,
+  cite,
+  projection,
+}: {
+  value: string;
+  label: string;
+  className?: string;
+  cite?: CitationId[];
+  projection?: boolean;
+}) {
   return (
     <Card className={className}>
-      <div className="text-3xl font-bold tracking-tight tabular sm:text-4xl">{value}</div>
-      <div className="mt-1 text-base text-muted-foreground">{label}</div>
+      <div className="text-3xl font-bold tracking-tight tabular sm:text-4xl">
+        {value}
+        {cite && <Cite ids={cite} />}
+      </div>
+      <div className="mt-1 text-base text-muted-foreground">
+        {label}
+        {projection && <Projection />}
+      </div>
     </Card>
+  );
+}
+
+function FactGrid({ facts, accent }: { facts: Fact[]; accent?: string }) {
+  return (
+    <div className={cn('grid gap-4', facts.length === 4 ? 'grid-cols-2 lg:grid-cols-4' : 'sm:grid-cols-3')}>
+      {facts.map((f) => (
+        <Stat key={f.label} value={f.value} label={f.label} cite={f.cite} className={accent} />
+      ))}
+    </div>
   );
 }
 
@@ -71,7 +144,10 @@ function RampChart() {
   const bw = (W - pad) / MONTHLY_RAMP.length;
   return (
     <Card>
-      <div className="mb-3 text-base font-semibold">Monthly revenue ramp, months 1–12</div>
+      <div className="mb-3 text-base font-semibold">
+        Monthly revenue ramp, months 1–12 (High case)
+        <Projection />
+      </div>
       <svg viewBox={`0 0 ${W} ${H + 40}`} className="h-auto w-full" role="img" aria-label="Monthly revenue from $8.9K in month 1 to $300K in month 12">
         {MONTHLY_RAMP.map((m, i) => {
           const h = (m.total / max) * H;
@@ -137,6 +213,7 @@ export default function Brief() {
               AI scam guardian for an aging parent's phone. <span className="font-semibold text-foreground">$1.43M</span> year-1
               revenue, <span className="font-semibold text-foreground">$2.85M</span> exit ARR, <span className="font-semibold text-foreground">~$35M</span> at
               month 12 (High case). Waitlist live.
+              <Projection />
             </p>
           </div>
         </header>
@@ -166,13 +243,17 @@ export default function Brief() {
               </Card>
             ))}
           </div>
+          <FactGrid facts={CUSTOMER_FACTS} />
           <div>
             <div className="label-caps mb-3 text-sm text-muted-foreground">Secondary B2B2C buyers</div>
             <ul className="divide-y divide-border rounded-2xl border border-border bg-surface">
               {B2B_BUYERS.map((b) => (
                 <li key={b.who} className="p-4 sm:flex sm:gap-4">
                   <span className="font-semibold sm:w-60 sm:shrink-0">{b.who}</span>
-                  <span className="text-muted-foreground">{b.why}</span>
+                  <span className="text-muted-foreground">
+                    {b.why}
+                    {b.cite && <Cite ids={b.cite} />}
+                  </span>
                 </li>
               ))}
             </ul>
@@ -182,9 +263,10 @@ export default function Brief() {
         <Section index={2}>
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             {HEADLINE_STATS.map((s, i) => (
-              <Stat key={s.label} value={s.value} label={s.label} className={i < 2 ? 'border-t-4 border-t-state-scam' : ''} />
+              <Stat key={s.label} value={s.value} label={s.label} cite={s.cite} className={i < 2 ? 'border-t-4 border-t-state-scam' : ''} />
             ))}
           </div>
+          <FactGrid facts={THREAT_STATS} accent="border-t-4 border-t-state-screening" />
           <div className="grid gap-4 sm:grid-cols-3">
             {BENEFITS.map((b) => (
               <Card key={b.who} className={cn('border-t-4', TONE_BORDER[b.tone])}>
@@ -209,6 +291,12 @@ export default function Brief() {
                     <li key={it}>{it}</li>
                   ))}
                 </ul>
+                {g.fact && (
+                  <p className="mt-3 border-t border-border pt-2 text-base text-muted-foreground">
+                    {g.fact.text}
+                    <Cite ids={g.fact.cite} />
+                  </p>
+                )}
               </Card>
             ))}
           </div>
@@ -240,10 +328,13 @@ export default function Brief() {
 
         <Section index={5}>
           <ScenarioCards year="y1" />
-          <div className="label-caps text-sm text-muted-foreground">High case breakdown</div>
+          <div className="label-caps text-sm text-muted-foreground">
+            High case breakdown
+            <Projection />
+          </div>
           <div className="grid gap-4 sm:grid-cols-3">
             {Y1_SPLIT.map((s) => (
-              <Stat key={s.label} value={s.value} label={s.label} />
+              <Stat key={s.label} value={s.value} label={s.label} projection />
             ))}
           </div>
           <RampChart />
@@ -251,7 +342,10 @@ export default function Brief() {
 
         <Section index={6}>
           <ScenarioCards year="y2" />
-          <div className="label-caps text-sm text-muted-foreground">High case: drivers and math</div>
+          <div className="label-caps text-sm text-muted-foreground">
+            High case: drivers and math
+            <Projection />
+          </div>
           <ul className="grid gap-3 sm:grid-cols-2">
             {Y2_DRIVERS.map((d) => (
               <li key={d} className="rounded-xl border border-border bg-surface p-4 text-base">
@@ -261,7 +355,7 @@ export default function Brief() {
           </ul>
           <div className="grid gap-4 sm:grid-cols-3">
             {Y2_REVENUE.map((r) => (
-              <Stat key={r.label} value={r.value} label={`${r.label}: ${r.math}`} />
+              <Stat key={r.label} value={r.value} label={`${r.label}: ${r.math}`} projection />
             ))}
           </div>
           <p className="text-base text-muted-foreground">Exit ARR {Y2_ARR.total}: {Y2_ARR.math}.</p>
@@ -272,13 +366,19 @@ export default function Brief() {
           <div className="space-y-4">
             {(['y1', 'y2'] as const).map((y) => (
               <div key={y}>
-                <div className="label-caps mb-3 text-sm text-muted-foreground">{y === 'y1' ? 'Month 12' : 'Month 24'}</div>
+                <div className="label-caps mb-3 text-sm text-muted-foreground">
+                  {y === 'y1' ? 'Month 12' : 'Month 24'}
+                  <Projection />
+                </div>
                 <div className="grid gap-4 sm:grid-cols-3">
                   {SCENARIO_SET.map((sc) => (
                     <Card key={sc.key} className={cn('border-t-4', SCENARIO_BORDER[sc.key], sc.key === 'high' && 'shadow-lift')}>
                       <div className="text-base font-semibold text-muted-foreground">{sc.name}</div>
                       <div className="text-4xl font-bold tabular sm:text-5xl">{sc[y].valuation}</div>
-                      <div className="mt-2 text-base">{sc[y].valuationMath}</div>
+                      <div className="mt-2 text-base">
+                        {sc[y].valuationMath}
+                        {sc.key === 'high' && y === 'y1' && <Cite ids={['aura', 'finro']} />}
+                      </div>
                     </Card>
                   ))}
                 </div>
@@ -287,11 +387,14 @@ export default function Brief() {
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             {COMPS.map((c) => (
-              <Stat key={c.name} value={c.value} label={`${c.name}: ${c.note}`} />
+              <Stat key={c.name} value={c.value} label={`${c.name}: ${c.note}`} cite={c.cite} />
             ))}
           </div>
           <div>
-            <div className="label-caps mb-3 text-sm text-muted-foreground">Financing path</div>
+            <div className="label-caps mb-3 text-sm text-muted-foreground">
+              Financing path
+              <Projection />
+            </div>
             <ol className="divide-y divide-border rounded-2xl border border-border bg-surface">
               {[...FINANCING, { stage: 'Month 24 (High)', detail: `${VALUATION_M24.financing} at ~$140M` }].map((f) => (
                 <li key={f.stage} className="p-4 sm:flex sm:gap-4">
@@ -301,8 +404,10 @@ export default function Brief() {
               ))}
             </ol>
           </div>
-          <Card className="bg-surface-2">
-            <div className="label-caps text-sm text-muted-foreground">Assumptions</div>
+          <Card className="scroll-mt-20 bg-surface-2">
+            <div id="assumptions" className="scroll-mt-20 label-caps text-sm text-muted-foreground">
+              Assumptions (our projections, not sourced facts)
+            </div>
             <ul className="mt-2 list-disc space-y-1 pl-5 text-base">
               {ASSUMPTIONS.map((a) => (
                 <li key={a}>{a}</li>
@@ -312,15 +417,30 @@ export default function Brief() {
         </Section>
 
         <Section index={8}>
-          <ul className="space-y-2 text-base">
-            {SOURCES.map((s) => (
-              <li key={s.url}>
-                <a href={s.url} target="_blank" rel="noreferrer noopener" className="underline decoration-amber underline-offset-4 break-words">
-                  {s.label}
-                </a>
+          <p className="text-base text-muted-foreground">
+            Numbered citations <span className="font-semibold text-amber">[n]</span> mark sourced facts. Items tagged{' '}
+            <span className="font-semibold">Projection</span> are our own forecasts; see Assumptions.
+          </p>
+          <ol className="space-y-3 text-base">
+            {CITATIONS.map((c, i) => (
+              <li key={c.id} id={`src-${c.id}`} className="scroll-mt-20 flex gap-3">
+                <span className="w-8 shrink-0 font-semibold text-amber tabular">[{i + 1}]</span>
+                <div className="min-w-0">
+                  <a href={c.url} target="_blank" rel="noopener noreferrer" className="underline decoration-amber underline-offset-4 break-words">
+                    {c.publisher} ({c.year}): {c.label}
+                  </a>
+                  <div className="text-muted-foreground">{c.stat}</div>
+                  <a
+                    href={`#${c.usedIn}`}
+                    className="inline-block py-1 text-sm text-muted-foreground underline underline-offset-4"
+                    aria-label={`Back to ${SECTIONS.find((s) => s.id === c.usedIn)?.chip ?? 'section'}`}
+                  >
+                    ↑ Back to {SECTIONS.find((s) => s.id === c.usedIn)?.chip}
+                  </a>
+                </div>
               </li>
             ))}
-          </ul>
+          </ol>
         </Section>
       </main>
     </div>

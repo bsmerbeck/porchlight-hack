@@ -50,19 +50,41 @@ export const USER = {
   why: 'Keeps their own phone and routine. Nothing to learn: just watch the light.',
 };
 
-export const B2B_BUYERS: { who: string; why: string }[] = [
+export interface Fact {
+  value: string;
+  label: string;
+  cite: CitationId[];
+}
+
+export const CUSTOMER_FACTS: Fact[] = [
+  { value: '63M', label: 'Americans are family caregivers, up ~50% since 2015', cite: ['aarpCaregiving'] },
+  { value: '54%', label: 'of adults in their 40s have both an aging parent and a child', cite: ['pewSandwich'] },
+  { value: '78%', label: 'of adults 65+ own a smartphone; carrier integration covers the rest', cite: ['pewSmartphone'] },
+];
+
+export const B2B_BUYERS: { who: string; why: string; cite?: CitationId[] }[] = [
   { who: 'Home-care agencies', why: 'Client safety is the product; a scam on their watch costs trust and contracts.' },
   { who: 'Senior-living operators', why: 'Resident safety and a differentiator for move-in decisions.' },
-  { who: 'Banks & credit unions', why: 'Every stopped scam is a fraud reimbursement they do not pay.' },
+  {
+    who: 'Banks & credit unions',
+    why: 'Banks flagged ~$27B of elder-exploitation activity in one year; every stopped scam is a loss or reimbursement they avoid.',
+    cite: ['fincen'],
+  },
   { who: 'Carriers', why: 'A value-add line feature for senior and family plans.' },
   { who: 'Insurers', why: 'Lower elder-fraud claims; a retention perk for older policyholders.' },
 ];
 
-export const HEADLINE_STATS: { value: string; label: string }[] = [
-  { value: '$4.8–4.9B', label: 'lost to fraud by people over 60 in 2024 (FBI IC3)' },
-  { value: '+43%', label: 'year over year' },
-  { value: '~$83K', label: 'average loss per victim' },
-  { value: '61M', label: 'Americans are 65+ (Census 2024)' },
+export const HEADLINE_STATS: Fact[] = [
+  { value: '$4.9B', label: 'lost to fraud by people over 60 in 2024 (FBI IC3)', cite: ['ic3', 'aarpFbi'] },
+  { value: '+43%', label: 'year over year', cite: ['ic3'] },
+  { value: '~$83K', label: 'average loss per victim', cite: ['ic3', 'aarpFbi'] },
+  { value: '61.2M', label: 'Americans are 65+ (Census 2024)', cite: ['census'] },
+];
+
+export const THREAT_STATS: Fact[] = [
+  { value: '4x', label: 'more older adults reported $10K+ impostor-scam losses, 2020 → 2024', cite: ['ftcImpostor'] },
+  { value: '41%', label: 'of those losses started with a phone call', cite: ['ftcImpostor'] },
+  { value: '3 sec', label: 'of audio is enough for an 85% voice-clone match', cite: ['mcafee'] },
 ];
 
 export const BENEFITS: { who: string; tone: 'verified' | 'idle' | 'screening'; points: string[] }[] = [
@@ -88,17 +110,27 @@ export const BENEFITS: { who: string; tone: 'verified' | 'idle' | 'screening'; p
   },
 ];
 
-export const INTEGRATIONS: { group: string; items: string[] }[] = [
+export const INTEGRATIONS: { group: string; items: string[]; fact?: { text: string; cite: CitationId[] } }[] = [
   {
     group: 'Home',
     items: ['Philips Hue', 'Amazon Alexa', 'Google Home', 'Echo Show / Nest Hub: one-tap family video calls'],
+    fact: { text: '34% of 65+ broadband households already own a smart speaker or display.', cite: ['parksSpeakers'] },
   },
   {
     group: 'Wearables',
     items: ['Vibration / flash alerts for hearing-impaired seniors', 'Apple Watch', 'Fall-detection pendants'],
+    fact: { text: 'Disabling hearing loss: 22% of adults 65–74, 55% of adults 75+.', cite: ['nidcd'] },
   },
-  { group: 'Phone network', items: ['Landline support', 'Carrier integration (covers flip phones)'] },
-  { group: 'Financial', items: ['Bank / credit-union transaction-alert tie-ins'] },
+  {
+    group: 'Phone network',
+    items: ['Landline support', 'Carrier integration (covers flip phones)'],
+    fact: { text: '22% of adults 65+ still have no smartphone.', cite: ['pewSmartphone'] },
+  },
+  {
+    group: 'Financial',
+    items: ['Bank / credit-union transaction-alert tie-ins'],
+    fact: { text: '~$27B in elder-exploitation activity flagged by banks in one year.', cite: ['fincen'] },
+  },
   { group: 'Care', items: ['Caregiver / agency dashboard', 'Medical-alert partners: Lively, Life Alert'] },
 ];
 
@@ -138,9 +170,9 @@ export const Y1_SPLIT: { label: string; value: string }[] = [
   { label: 'B2B pilots', value: '$235K' },
 ];
 
-export const COMPS: { name: string; value: string; note: string }[] = [
-  { name: 'Aura', value: '~11.4x', note: '$2.5B valuation on $220M+ revenue' },
-  { name: 'Private cybersecurity avg.', value: '~15.2x', note: 'revenue multiple, 2025 (Finro)' },
+export const COMPS: { name: string; value: string; note: string; cite: CitationId[] }[] = [
+  { name: 'Aura', value: '~11.4x', note: '$2.5B valuation on $220M+ revenue', cite: ['aura'] },
+  { name: 'Private cybersecurity avg.', value: '~15.2x', note: 'revenue multiple, 2025 (Finro)', cite: ['finro'] },
 ];
 
 export const FINANCING: { stage: string; detail: string }[] = [
@@ -149,7 +181,7 @@ export const FINANCING: { stage: string; detail: string }[] = [
 ];
 
 export const ASSUMPTIONS: string[] = [
-  '~30% of smartphone-owning seniors have an engaged adult child who would pay.',
+  'Estimate (not sourced): ~30% of smartphone-owning seniors have an engaged adult child who would pay.',
   '$15 blended ARPU across Guardian and Family.',
   '30% of new subscribers buy the $99 kit (hardware excluded from ARR).',
   'Ramp to 12,500 subscribers and 4 paid B2B pilots by month 12, fully funded.',
@@ -159,29 +191,158 @@ export const ASSUMPTIONS: string[] = [
   'Low / Mid / High differ by distribution: word-of-mouth only; one agency channel + paid acquisition; smart-display/wearable launch + 2–3 carrier/bank deals.',
 ];
 
-export const SOURCES: { label: string; url: string }[] = [
-  { label: 'FBI IC3 2024 Annual Report', url: 'https://www.ic3.gov/AnnualReport/Reports/2024_IC3Report.pdf' },
-  { label: 'AARP: FBI fraud report 2024', url: 'https://www.aarp.org/money/scams-fraud/fbi-report-fraud-2024/' },
+// ---- Citations (every sourced number on the page points here) ----
+
+export type CitationId =
+  | 'ic3'
+  | 'aarpFbi'
+  | 'census'
+  | 'pewSmartphone'
+  | 'ftcImpostor'
+  | 'mcafee'
+  | 'aarpCaregiving'
+  | 'pewSandwich'
+  | 'parksSpeakers'
+  | 'nidcd'
+  | 'fincen'
+  | 'aura'
+  | 'finro';
+
+export interface Citation {
+  id: CitationId;
+  label: string;
+  publisher: string;
+  year: number;
+  url: string;
+  /** The exact stat we rely on, as stated by the source. */
+  stat: string;
+  /** Section id where the citation is first used (Sources list links back here). */
+  usedIn: string;
+}
+
+/** Order defines the [n] numbering. All URLs verified 2026-09-22. */
+export const CITATIONS: Citation[] = [
   {
-    label: 'U.S. Census, Vintage 2024 population estimates',
+    id: 'ic3',
+    label: 'Internet Crime Report 2024 (Elder Fraud, 60+)',
+    publisher: 'FBI IC3',
+    year: 2025,
+    url: 'https://www.ic3.gov/AnnualReport/Reports/2024_IC3Report.pdf',
+    stat: '60+: $4.885B lost, 147,127 complaints, +43% losses vs 2023, $83,000 average loss.',
+    usedIn: 'benefit',
+  },
+  {
+    id: 'aarpFbi',
+    label: 'FBI: Older Americans lost a record $4.9 billion through fraud in 2024',
+    publisher: 'AARP',
+    year: 2025,
+    url: 'https://www.aarp.org/money/scams-fraud/fbi-report-fraud-2024/',
+    stat: 'Nearly $4.9B stolen, average loss $83,000, a 43% jump.',
+    usedIn: 'benefit',
+  },
+  {
+    id: 'census',
+    label: 'Vintage 2024 population estimates by characteristics',
+    publisher: 'U.S. Census Bureau',
+    year: 2025,
     url: 'https://www.census.gov/newsroom/press-kits/2025/2024-population-estimates-characteristics.html',
+    stat: 'Population age 65+ rose 3.1% to 61.2 million (2023 to 2024).',
+    usedIn: 'benefit',
   },
   {
-    label: 'Pew: smartphone ownership (2026)',
+    id: 'pewSmartphone',
+    label: 'Internet use, smartphone ownership and digital divides in the U.S.',
+    publisher: 'Pew Research Center',
+    year: 2026,
     url: 'https://www.pewresearch.org/short-reads/2026/01/08/internet-use-smartphone-ownership-digital-divides-in-u-s/',
+    stat: '78% of adults 65 and older own a smartphone.',
+    usedIn: 'who',
   },
   {
-    label: 'SecurityWeek: Aura raises at $2.5B',
+    id: 'ftcImpostor',
+    label: 'Data Spotlight: False alarm, real scam',
+    publisher: 'Federal Trade Commission',
+    year: 2025,
+    url: 'https://www.ftc.gov/news-events/data-visualizations/data-spotlight/2025/08/false-alarm-real-scam-how-scammers-are-stealing-older-adults-life-savings',
+    stat: 'Older adults reporting $10K+ impostor-scam losses rose more than fourfold 2020 to 2024; 41% said a phone call was first contact.',
+    usedIn: 'benefit',
+  },
+  {
+    id: 'mcafee',
+    label: 'Artificial Intelligence voice scams on the rise with 1 in 4 adults impacted',
+    publisher: 'McAfee (via Business Wire)',
+    year: 2023,
+    url: 'https://www.businesswire.com/news/home/20230501005587/en/Artificial-Intelligence-Voice-Scams-on-the-Rise-with-1-in-4-Adults-Impacted',
+    stat: 'Three seconds of audio produced an 85% voice match; 1 in 4 adults experienced or knew someone hit by an AI voice scam.',
+    usedIn: 'benefit',
+  },
+  {
+    id: 'aarpCaregiving',
+    label: 'Caregiving in the US 2025',
+    publisher: 'AARP & National Alliance for Caregiving',
+    year: 2025,
+    url: 'https://www.aarp.org/pri/topics/ltss/family-caregiving/caregiving-in-the-us-2025/',
+    stat: '63 million Americans are family caregivers, up nearly 50% since 2015.',
+    usedIn: 'who',
+  },
+  {
+    id: 'pewSandwich',
+    label: 'More than half of Americans in their 40s are sandwiched',
+    publisher: 'Pew Research Center',
+    year: 2022,
+    url: 'https://www.pewresearch.org/short-reads/2022/04/08/more-than-half-of-americans-in-their-40s-are-sandwiched-between-an-aging-parent-and-their-own-children/',
+    stat: '54% of adults in their 40s (45% in their 50s) have an aging parent and a child.',
+    usedIn: 'who',
+  },
+  {
+    id: 'parksSpeakers',
+    label: '34% of U.S. broadband heads of household ages 65+ own a smart speaker or display',
+    publisher: 'Parks Associates',
+    year: 2021,
+    url: 'https://www.prnewswire.com/news-releases/parks-associates-34-of-us-broadband-heads-of-household-ages-65-own-a-smart-speaker-or-smart-display-301248297.html',
+    stat: '34% of 65+ broadband households own a smart speaker or smart display.',
+    usedIn: 'integrations',
+  },
+  {
+    id: 'nidcd',
+    label: 'Quick statistics about hearing',
+    publisher: 'NIH / NIDCD',
+    year: 2024,
+    url: 'https://www.nidcd.nih.gov/health/statistics/quick-statistics-hearing',
+    stat: '22% of adults 65–74 and 55% of those 75+ have disabling hearing loss.',
+    usedIn: 'integrations',
+  },
+  {
+    id: 'fincen',
+    label: 'FinCEN issues analysis of elder financial exploitation',
+    publisher: 'U.S. Treasury FinCEN',
+    year: 2024,
+    url: 'https://www.fincen.gov/news/news-releases/fincen-issues-analysis-elder-financial-exploitation',
+    stat: '155,415 bank filings flagged ~$27B in elder-exploitation suspicious activity in one year (Jun 2022–Jun 2023).',
+    usedIn: 'who',
+  },
+  {
+    id: 'aura',
+    label: 'Consumer security firm Aura raises $200M at $2.5B valuation',
+    publisher: 'SecurityWeek',
+    year: 2021,
     url: 'https://www.securityweek.com/consumer-security-firm-aura-raises-200-million-25-billion-valuation/',
+    stat: '$2.5B post-money; 1M+ customers; annual revenue over $220M (≈11.4x).',
+    usedIn: 'valuation',
   },
-  { label: 'MyScamGuide: EverSafe review', url: 'https://myscamguide.com/eversafe-review/' },
-  { label: 'U.S. News: Lively review', url: 'https://www.usnews.com/360-reviews/services/cell-phone-plans/lively-review' },
   {
-    label: 'TechRepublic: RoboKiller vs Nomorobo',
-    url: 'https://www.techrepublic.com/article/robokiller-vs-nomorobo-which-robocall-blocker-should-ios-users-choose/',
+    id: 'finro',
+    label: 'Cybersecurity valuation multiples, mid-2025',
+    publisher: 'Finro Financial Consulting',
+    year: 2025,
+    url: 'https://www.finrofca.com/news/cybersecurity-valuation-mid-2025',
+    stat: 'Private cybersecurity startups average 15.2x revenue (M&A 16.3x, public 7.8x).',
+    usedIn: 'valuation',
   },
-  { label: 'Finro: cybersecurity valuations mid-2025', url: 'https://www.finrofca.com/news/cybersecurity-valuation-mid-2025' },
 ];
+
+export const citationNumber = (id: CitationId): number => CITATIONS.findIndex((c) => c.id === id) + 1;
+export const citationById = (id: CitationId): Citation => CITATIONS.find((c) => c.id === id)!;
 
 // ---- Year 2 (optimistic projection, orchestrator-derived) ----
 
