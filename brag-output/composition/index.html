@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en" data-resolution="landscape">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Porchlight — brag</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script src="audio-react.js"></script>
+    <style>
+      @font-face {
+        font-family: "Geist";
+        src: url("assets/fonts/geist.woff2") format("woff2");
+        font-weight: 100 900;
+        font-style: normal;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { margin: 0; width: 1920px; height: 1080px; overflow: hidden; background: oklch(0.16 0.01 60); }
+      /* Porchlight "porch light at dusk" tokens, lifted from apps/web/src/index.css (dark scope) */
+      :root {
+        --bg: oklch(0.16 0.01 60);
+        --surface: oklch(0.20 0.012 60);
+        --surface-2: oklch(0.24 0.014 60);
+        --fg: oklch(0.95 0.012 80);
+        --muted: oklch(0.72 0.02 70);
+        --line: oklch(1 0 0 / 0.1);
+        --amber: oklch(0.80 0.15 75);
+        --screening: oklch(0.70 0.12 240);
+        --verified: oklch(0.75 0.17 150);
+        --scam: oklch(0.64 0.22 25);
+        --ar-glow: 0.2;
+        --ar-bass: 0.2;
+      }
+    </style>
+    <style id="layout">
+      /* ---- LANDSCAPE LAYOUT ---- */
+      :root { --W: 1920px; --H: 1080px; --gx: 470px; --gy: 500px; }
+      #lampbox { left: 170px; top: 130px; width: 600px; height: 720px; }
+      #pills { left: 170px; top: 880px; width: 600px; }
+      .panel { position: absolute; left: 880px; top: 0; width: 920px; height: 1080px; display: flex; flex-direction: column; justify-content: center; gap: 34px; }
+      .phonerow { flex-direction: row; }
+      .center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+      .big { font-size: 150px; }
+      .stat { font-size: 230px; }
+    </style>
+    <style>
+      #root { width: var(--W); height: var(--H); background: var(--bg); color: var(--fg); font-family: "Geist", ui-sans-serif, system-ui, sans-serif; overflow: hidden; position: relative; }
+      .clip { position: absolute; inset: 0; }
+      .abs { position: absolute; }
+      .lyr { position: absolute; inset: 0; }
+      .glow { position: absolute; inset: 0; opacity: 0; }
+      #g-amber { background: radial-gradient(circle at var(--gx) var(--gy), oklch(0.80 0.15 75 / 0.30), transparent 55%); }
+      #g-blue { background: radial-gradient(circle at var(--gx) var(--gy), oklch(0.70 0.12 240 / 0.30), transparent 55%); }
+      #g-red { background: radial-gradient(circle at var(--gx) var(--gy), oklch(0.64 0.22 25 / 0.75), oklch(0.64 0.22 25 / 0.28) 60%, oklch(0.64 0.22 25 / 0.12)); }
+      #g-green { background: radial-gradient(circle at var(--gx) var(--gy), oklch(0.75 0.17 150 / 0.55), oklch(0.75 0.17 150 / 0.16) 60%, transparent); }
+      #lampbox svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; color: oklch(0.93 0.02 80); }
+      #pills { position: absolute; height: 70px; }
+      .pill { position: absolute; left: 50%; top: 0; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 14px; padding: 14px 28px; border-radius: 999px; border: 2px solid currentColor; font-size: 26px; font-weight: 700; letter-spacing: 0.18em; white-space: nowrap; background: oklch(0.16 0.01 60 / 0.7); opacity: 0; }
+      .pill .dot { width: 14px; height: 14px; border-radius: 50%; background: currentColor; box-shadow: 0 0 16px currentColor; }
+      #p-idle { color: var(--amber); opacity: 1; }
+      #p-screen { color: var(--screening); }
+      #p-verify { color: var(--amber); }
+      #p-scam { color: var(--scam); }
+      #p-ok { color: var(--verified); }
+      .steplabel { display: flex; align-items: center; gap: 18px; font-size: 24px; font-weight: 700; letter-spacing: 0.2em; color: var(--muted); }
+      .steplabel .tick { width: 46px; height: 5px; border-radius: 3px; background: var(--amber); box-shadow: 0 0 calc(10px + var(--ar-glow) * 24px) oklch(0.80 0.15 75 / 0.6); }
+      .card { background: var(--surface); border: 1px solid var(--line); border-radius: 22px; padding: 34px 40px; position: relative; overflow: hidden; }
+      .h1 { font-size: 66px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.05; }
+      .muted { color: var(--muted); }
+      /* s1 */
+      .callrow { display: flex; align-items: center; gap: 30px; }
+      .avatar { position: relative; width: 110px; height: 110px; border-radius: 50%; background: var(--surface-2); display: flex; align-items: center; justify-content: center; font-size: 52px; font-weight: 700; color: var(--muted); flex-shrink: 0; }
+      .ring { position: absolute; inset: 0; border-radius: 50%; border: 3px solid var(--amber); opacity: 0; }
+      .who { font-size: 44px; font-weight: 700; }
+      .num { font-size: 28px; color: var(--muted); margin-top: 6px; font-family: ui-monospace, Menlo, monospace; }
+      .bubble { background: var(--surface-2); border-radius: 22px 22px 22px 6px; padding: 30px 36px; font-size: 42px; line-height: 1.3; font-weight: 500; min-height: 190px; }
+      .who-tag { font-size: 20px; font-weight: 700; letter-spacing: 0.2em; color: var(--muted); margin-bottom: 12px; }
+      .caret { display: inline-block; width: 3px; height: 1em; background: var(--fg); vertical-align: -0.12em; margin-left: 4px; }
+      .note { font-size: 30px; color: var(--muted); }
+      .note b { color: var(--fg); font-weight: 600; }
+      /* s2 */
+      .riskhead { display: flex; align-items: baseline; justify-content: space-between; }
+      .risknum { font-size: 150px; font-weight: 800; letter-spacing: -0.04em; line-height: 0.9; color: #5aa6e0; font-variant-numeric: tabular-nums; }
+      .risknum small { font-size: 44px; color: var(--muted); font-weight: 600; }
+      .track { height: 22px; border-radius: 11px; background: var(--surface-2); overflow: hidden; margin-top: 22px; }
+      .fill { height: 100%; width: 100%; border-radius: 11px; background: linear-gradient(90deg, oklch(0.70 0.12 240), oklch(0.80 0.15 75) 55%, oklch(0.64 0.22 25)); transform-origin: left center; transform: scaleX(0); }
+      .chips { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 30px; }
+      .chip { display: flex; flex-direction: column; gap: 4px; padding: 16px 24px; border-radius: 16px; background: oklch(0.64 0.22 25 / 0.14); border: 2px solid oklch(0.64 0.22 25 / 0.7); opacity: 0; }
+      .chip b { font-size: 30px; color: oklch(0.80 0.14 25); }
+      .chip span { font-size: 22px; color: var(--muted); }
+      .line2 { font-size: 34px; line-height: 1.3; color: var(--fg); }
+      /* s3 */
+      .phonerow { display: flex; align-items: center; gap: 56px; }
+      .phone { width: 430px; height: 860px; border-radius: 64px; background: oklch(0.11 0.008 60); border: 10px solid oklch(0.30 0.01 60); padding: 70px 28px 40px; position: relative; flex-shrink: 0; box-shadow: 0 40px 120px oklch(0 0 0 / 0.6); }
+      .phone .island { position: absolute; top: 22px; left: 50%; width: 120px; height: 34px; margin-left: -60px; border-radius: 20px; background: #000; }
+      .phone .time { text-align: center; font-size: 78px; font-weight: 300; letter-spacing: -0.02em; margin: 10px 0 30px; }
+      .notif { background: var(--surface-2); border-radius: 30px; padding: 26px 24px; }
+      .notif .app { display: flex; align-items: center; gap: 10px; font-size: 18px; color: var(--muted); font-weight: 600; letter-spacing: 0.06em; }
+      .notif .app i { width: 26px; height: 26px; border-radius: 7px; background: var(--amber); display: block; }
+      .notif h3 { font-size: 36px; font-weight: 700; margin: 16px 0 10px; letter-spacing: -0.02em; }
+      .notif p { font-size: 21px; line-height: 1.35; color: var(--muted); }
+      .btn { margin-top: 18px; height: 72px; border-radius: 18px; display: flex; align-items: center; justify-content: center; font-size: 25px; font-weight: 700; position: relative; }
+      .btn.yes { border: 2px solid oklch(0.75 0.17 150 / 0.7); color: var(--verified); }
+      .btn.no { background: var(--scam); color: #fff; }
+      .tap { position: absolute; width: 80px; height: 80px; border-radius: 50%; background: oklch(1 0 0 / 0.55); left: 50%; top: 50%; margin: -40px 0 0 -40px; opacity: 0; }
+      .side { display: flex; flex-direction: column; gap: 24px; }
+      /* s4 */
+      .blocked { font-weight: 800; letter-spacing: -0.04em; line-height: 0.95; color: #fff; text-shadow: 0 0 60px oklch(0.64 0.22 25 / 0.9); }
+      .sub { font-size: 38px; color: oklch(0.95 0.02 40); margin-top: 26px; font-weight: 500; }
+      .dash { margin-top: 40px; display: inline-flex; gap: 14px; flex-wrap: wrap; justify-content: center; }
+      .dash span { font-size: 24px; padding: 10px 20px; border-radius: 999px; background: oklch(0 0 0 / 0.35); color: oklch(0.95 0.02 40); }
+      .verified { color: #fff; text-shadow: 0 0 60px oklch(0.75 0.17 150 / 0.9); }
+      /* s5 */
+      .statnum { font-weight: 800; letter-spacing: -0.05em; color: var(--amber); line-height: 0.9; text-shadow: 0 0 calc(30px + var(--ar-glow) * 40px) oklch(0.80 0.15 75 / 0.35); font-variant-numeric: tabular-nums; }
+      .statcap { font-size: 44px; font-weight: 600; margin-top: 24px; max-width: 1300px; line-height: 1.2; }
+      .src { font-size: 22px; letter-spacing: 0.16em; color: var(--muted); margin-top: 22px; }
+      .mark { display: flex; align-items: center; gap: 26px; font-size: 120px; font-weight: 700; letter-spacing: -0.04em; }
+      .mark svg { width: 120px; height: 144px; overflow: visible; color: oklch(0.93 0.02 80); }
+      .tag { font-size: 46px; font-weight: 500; margin-top: 30px; line-height: 1.25; max-width: 1400px; }
+      .url { margin-top: 40px; font-size: 34px; font-weight: 600; color: var(--amber); letter-spacing: 0.02em; padding: 14px 32px; border: 2px solid oklch(0.80 0.15 75 / 0.5); border-radius: 999px; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="26.5" data-fps="30" data-width="1920" data-height="1080">
+      <!-- ============ PERSISTENT: room glow + Margaret's lamp + state pill ============ -->
+      <section id="bg" class="clip" data-start="0" data-duration="21.2" data-track-index="0">
+        <div id="g-amber" class="glow"></div>
+        <div id="g-blue" class="glow"></div>
+        <div id="g-red" class="glow"></div>
+        <div id="g-green" class="glow"></div>
+        <div id="lampbox" class="abs"></div>
+        <div id="pills">
+          <div id="p-idle" class="pill"><span class="dot"></span>RINGING</div>
+          <div id="p-screen" class="pill"><span class="dot"></span>SCREENING</div>
+          <div id="p-verify" class="pill"><span class="dot"></span>VERIFYING</div>
+          <div id="p-scam" class="pill"><span class="dot"></span>SCAM</div>
+          <div id="p-ok" class="pill"><span class="dot"></span>VERIFIED</div>
+        </div>
+      </section>
+
+      <!-- ============ S1 — the call Grandma almost took ============ -->
+      <section id="s1" class="clip" data-start="0" data-duration="4.6" data-track-index="1">
+        <div class="panel">
+          <div class="steplabel" id="s1-label"><span class="tick"></span>MARGARET'S PHONE · 2:14 PM</div>
+          <div class="card callrow" id="s1-call">
+            <div class="avatar">?<div class="ring" id="r1"></div><div class="ring" id="r2"></div></div>
+            <div><div class="who">Unknown caller</div><div class="num">+1 (401) 555-0137</div></div>
+          </div>
+          <div class="bubble" id="s1-bubble">
+            <div class="who-tag">CALLER · SOUNDS EXACTLY LIKE BRENDEN</div>
+            <span id="s1-typed"></span><span class="caret" id="s1-caret"></span>
+          </div>
+          <div class="note" id="s1-note">A cloned voice. A panicked grandson. <b>Grandma reaches for her purse.</b></div>
+        </div>
+      </section>
+
+      <!-- ============ S2 — screening ============ -->
+      <section id="s2" class="clip" data-start="4.6" data-duration="5.0" data-track-index="2">
+        <div class="panel">
+          <div class="steplabel" id="s2-label"><span class="tick"></span>PORCHLIGHT AI ANSWERS FIRST</div>
+          <div class="line2 card" id="s2-line">“Can you get gift cards? I need it <b>today</b>. Please don't tell Mom.”</div>
+          <div class="card" id="s2-card">
+            <div class="riskhead"><div class="who">Scam risk</div><div class="risknum"><span id="s2-num">0</span><small>/100</small></div></div>
+            <div class="track"><div class="fill" id="s2-fill"></div></div>
+            <div class="chips">
+              <div class="chip"><b>Urgency</b><span>“I need it today”</span></div>
+              <div class="chip"><b>Secrecy</b><span>“Don't tell Mom”</span></div>
+              <div class="chip"><b>Odd payment</b><span>Gift cards</span></div>
+              <div class="chip"><b>Impersonation</b><span>Claims to be grandson</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ S3 — verifying with the real family ============ -->
+      <section id="s3" class="clip" data-start="9.6" data-duration="4.6" data-track-index="3">
+        <div class="panel phonerow">
+          <div class="phone" id="s3-phone">
+            <div class="island"></div>
+            <div class="time">2:14</div>
+            <div class="notif">
+              <div class="app"><i></i>PORCHLIGHT · NOW</div>
+              <h3>Is this you calling?</h3>
+              <p>Someone saying they're Brenden is on the phone with Grandma right now.</p>
+              <div class="btn yes">Yes, it's me · Face ID</div>
+              <div class="btn no" id="s3-no">No, block this call<div class="tap" id="s3-tap"></div></div>
+            </div>
+          </div>
+          <div class="side" id="s3-side">
+            <div class="steplabel"><span class="tick"></span>VERIFYING</div>
+            <div class="h1">The real Brenden gets a text.</div>
+            <div class="note">He's at work, 40 miles away.<br /><b>He was never arrested.</b></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ S4 — scam blocked ============ -->
+      <section id="s4" class="clip" data-start="14.2" data-duration="4.2" data-track-index="4">
+        <div class="panel" style="align-items:center;text-align:center">
+          <div class="blocked big" id="s4-title">SCAM<br />BLOCKED</div>
+          <div class="sub" id="s4-sub">The lamp turned red. Margaret hung up.</div>
+          <div class="dash" id="s4-dash"><span>Risk 95</span><span>Transcript saved</span><span>4 reasons</span><span>Family notified</span></div>
+        </div>
+      </section>
+
+      <!-- ============ S4b — the green path ============ -->
+      <section id="s4b" class="clip" data-start="18.4" data-duration="2.8" data-track-index="5">
+        <div class="panel" style="align-items:center;text-align:center">
+          <div class="note" id="s4b-q">And when it really is Brenden?</div>
+          <div class="blocked big verified" id="s4b-title">VERIFIED</div>
+          <div class="sub" id="s4b-sub" style="color:oklch(0.95 0.03 150)">He taps Yes + Face ID. Green light. Grandma picks up.</div>
+        </div>
+      </section>
+
+      <!-- ============ S5 — stat + close ============ -->
+      <section id="s5" class="clip" data-start="21.2" data-duration="5.3" data-track-index="6">
+        <div class="center" id="s5-stat">
+          <div class="statnum stat">$<span id="s5-num">0.0</span>B</div>
+          <div class="statcap">lost to fraud by Americans over 60 in 2024. Up 43% in a year.</div>
+          <div class="src">SOURCE: FBI IC3 2024</div>
+        </div>
+        <div class="center" id="s5-close" style="opacity:0">
+          <div class="mark"><span id="s5-lamp"></span>Porchlight</div>
+          <div class="tag">A cloned voice can fool Mom.<br /><span style="color:var(--amber)">It can't fool her family.</span></div>
+          <div class="url">porchlight-hack.web.app</div>
+        </div>
+      </section>
+
+      <audio id="bgm" src="assets/music/happy-beats-business-moves-vol-12-by-ende-dot-app.mp3" data-start="0" data-duration="26.5" data-media-start="0" data-track-index="10" data-volume="1"></audio>
+      <audio id="sfx-ring1" src="assets/sfx/interface/bong_001.ogg" data-start="0.2" data-track-index="11" data-volume="0.5"></audio>
+      <audio id="sfx-ring2" src="assets/sfx/interface/bong_001.ogg" data-start="1.4" data-track-index="12" data-volume="0.5"></audio>
+      <audio id="sfx-s2" src="assets/sfx/impact/impactSoft_medium_001.ogg" data-start="4.6" data-track-index="13" data-volume="0.6"></audio>
+      <audio id="sfx-c1" src="assets/sfx/ui/rollover2.ogg" data-start="7.0" data-track-index="14" data-volume="0.4"></audio>
+      <audio id="sfx-c2" src="assets/sfx/ui/rollover2.ogg" data-start="7.4" data-track-index="15" data-volume="0.4"></audio>
+      <audio id="sfx-c3" src="assets/sfx/ui/rollover2.ogg" data-start="7.8" data-track-index="16" data-volume="0.4"></audio>
+      <audio id="sfx-c4" src="assets/sfx/ui/rollover2.ogg" data-start="8.2" data-track-index="17" data-volume="0.4"></audio>
+      <audio id="sfx-s3" src="assets/sfx/casino/card-slide-1.ogg" data-start="9.7" data-track-index="18" data-volume="0.5"></audio>
+      <audio id="sfx-tap" src="assets/sfx/interface/click_003.ogg" data-start="12.9" data-track-index="19" data-volume="0.7"></audio>
+      <audio id="sfx-scam" src="assets/sfx/impact/impactBell_heavy_000.ogg" data-start="14.2" data-track-index="20" data-volume="0.8"></audio>
+      <audio id="sfx-ok" src="assets/sfx/impact/impactSoft_medium_000.ogg" data-start="18.9" data-track-index="21" data-volume="0.6"></audio>
+      <audio id="sfx-stat" src="assets/sfx/impact/impactSoft_medium_002.ogg" data-start="21.2" data-track-index="22" data-volume="0.6"></audio>
+      <audio id="sfx-end" src="assets/sfx/impact/impactBell_heavy_004.ogg" data-start="23.9" data-track-index="23" data-volume="0.7"></audio>
+    </div>
+
+    <script>
+      (function () {
+        /* LampGlow.tsx, reproduced as static SVG; one copy per state color, crossfaded */
+        function lampSVG(color, id) {
+          return (
+            '<svg viewBox="0 0 200 240" aria-hidden="true"><defs>' +
+            '<radialGradient id="halo-' + id + '" cx="50%" cy="50%" r="50%">' +
+            '<stop offset="0%" stop-color="' + color + '" stop-opacity="0.95"/>' +
+            '<stop offset="45%" stop-color="' + color + '" stop-opacity="0.35"/>' +
+            '<stop offset="100%" stop-color="' + color + '" stop-opacity="0"/></radialGradient>' +
+            '<radialGradient id="glass-' + id + '" cx="50%" cy="45%" r="65%">' +
+            '<stop offset="0%" stop-color="white" stop-opacity="0.95"/>' +
+            '<stop offset="40%" stop-color="' + color + '" stop-opacity="1"/>' +
+            '<stop offset="100%" stop-color="' + color + '" stop-opacity="0.55"/></radialGradient></defs>' +
+            '<circle class="halo" cx="100" cy="118" r="112" fill="url(#halo-' + id + ')" style="transform-origin:100px 118px"/>' +
+            '<path d="M22 70h36v10H32v80H22z" fill="currentColor" opacity="0.55"/>' +
+            '<path d="M58 70h42v8H58z" fill="currentColor" opacity="0.55"/>' +
+            '<path d="M96 74h8v20h-8z" fill="currentColor" opacity="0.6"/>' +
+            '<path d="M64 108l36-18 36 18v6H64z" fill="currentColor" opacity="0.8"/>' +
+            '<path d="M70 114h60v8H70z" fill="currentColor" opacity="0.7"/>' +
+            '<path d="M74 122h52l-6 70H80z" fill="url(#glass-' + id + ')" stroke="currentColor" stroke-opacity="0.55" stroke-width="3"/>' +
+            '<path d="M100 122v70" stroke="currentColor" stroke-opacity="0.45" stroke-width="3"/>' +
+            '<path d="M77 157h46" stroke="currentColor" stroke-opacity="0.35" stroke-width="2"/>' +
+            '<path d="M76 192h48l-6 12H82z" fill="currentColor" opacity="0.8"/>' +
+            '<path d="M96 204h8v8h-8z" fill="currentColor" opacity="0.6"/></svg>'
+          );
+        }
+        var C = {
+          amber: "oklch(0.80 0.15 75)",
+          blue: "oklch(0.70 0.12 240)",
+          red: "oklch(0.64 0.22 25)",
+          green: "oklch(0.75 0.17 150)",
+        };
+        var box = document.getElementById("lampbox");
+        box.innerHTML =
+          '<div id="L-amber" class="lyr">' + lampSVG(C.amber, "a") + "</div>" +
+          '<div id="L-blue" class="lyr" style="opacity:0">' + lampSVG(C.blue, "b") + "</div>" +
+          '<div id="L-red" class="lyr" style="opacity:0">' + lampSVG(C.red, "r") + "</div>" +
+          '<div id="L-green" class="lyr" style="opacity:0">' + lampSVG(C.green, "g") + "</div>";
+        document.getElementById("s5-lamp").innerHTML = lampSVG(C.amber, "m");
+
+        var tl = gsap.timeline({ paused: true });
+        var root = document.getElementById("root");
+        function swap(fromL, toL, fromG, toG, fromP, toP, t, d) {
+          d = d || 0.45;
+          tl.to(fromL, { opacity: 0, duration: d, ease: "none" }, t);
+          tl.to(toL, { opacity: 1, duration: d, ease: "none" }, t);
+          if (fromG) tl.to(fromG, { opacity: 0, duration: d, ease: "none" }, t);
+          tl.to(toG, { opacity: 1, duration: d, ease: "none" }, t);
+          tl.to(fromP, { opacity: 0, duration: 0.2, ease: "none" }, t);
+          tl.to(toP, { opacity: 1, duration: 0.25, ease: "none" }, t + 0.1);
+        }
+
+        /* lamp enters, amber, breathing */
+        tl.fromTo("#lampbox", { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" }, 0);
+        tl.fromTo("#g-amber", { opacity: 0 }, { opacity: 1, duration: 0.8, ease: "none" }, 0.1);
+        tl.fromTo("#L-amber .halo", { scale: 0.96, opacity: 0.7 }, { scale: 1.04, opacity: 1, duration: 1.1, ease: "sine.inOut", yoyo: true, repeat: 3 }, 0);
+        tl.fromTo("#pills", { opacity: 0 }, { opacity: 1, duration: 0.4 }, 0.3);
+
+        /* ===== S1 (0 -> 4.6) ===== */
+        tl.fromTo("#s1-label", { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.35, ease: "power3.out" }, 0.1);
+        tl.fromTo("#s1-call", { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 0.15);
+        ["#r1", "#r2"].forEach(function (r, i) {
+          tl.fromTo(r, { scale: 1, opacity: 0.9 }, { scale: 1.7, opacity: 0, duration: 1.2, ease: "power2.out", repeat: 2 }, 0.2 + i * 0.6);
+        });
+        tl.fromTo("#s1-bubble", { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 0.55);
+        var T1 = "Grandma, it's Brenden… I've been arrested. I need bail money. Don't tell Mom.";
+        var typed = document.getElementById("s1-typed");
+        var c1 = { n: 0 };
+        tl.to(c1, { n: T1.length, duration: 2.3, ease: "none", onUpdate: function () { typed.textContent = T1.slice(0, Math.round(c1.n)); } }, 0.8);
+        tl.to("#s1-caret", { opacity: 0, duration: 0.25, yoyo: true, repeat: 7 }, 0.8);
+        tl.fromTo("#s1-note", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 3.2);
+
+        /* ===== S2 (4.6 -> 9.6) SCREENING ===== */
+        swap("#L-amber", "#L-blue", "#g-amber", "#g-blue", "#p-idle", "#p-screen", 4.6);
+        tl.fromTo("#L-blue .halo", { scale: 0.99, opacity: 0.8 }, { scale: 1.03, opacity: 1, duration: 0.8, ease: "sine.inOut", yoyo: true, repeat: 5 }, 4.6);
+        tl.fromTo("#s2-label", { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.35, ease: "power3.out" }, 4.65);
+        tl.fromTo("#s2-line", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 4.8);
+        tl.fromTo("#s2-card", { opacity: 0, y: 36 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 5.3);
+        var numEl = document.getElementById("s2-num");
+        var r = { v: 0 };
+        tl.to(r, { v: 95, duration: 2.4, ease: "power2.inOut", onUpdate: function () { numEl.textContent = Math.round(r.v); } }, 5.8);
+        tl.to("#s2-fill", { scaleX: 0.95, duration: 2.4, ease: "power2.inOut" }, 5.8);
+        tl.to(".risknum", { color: "#eeb33b", duration: 0.6, ease: "none" }, 6.6);
+        tl.to(".risknum", { color: "#e5484d", duration: 0.6, ease: "none" }, 7.5);
+        tl.to(".risknum", { scale: 1.06, duration: 0.12, yoyo: true, repeat: 1, transformOrigin: "right center" }, 8.2);
+        tl.fromTo(".chip", { opacity: 0, y: 18, scale: 0.9 }, { opacity: 1, y: 0, scale: 1, duration: 0.3, ease: "back.out(2)", stagger: 0.4 }, 7.0);
+
+        /* ===== S3 (9.6 -> 14.2) VERIFYING ===== */
+        swap("#L-blue", "#L-amber", "#g-blue", "#g-amber", "#p-screen", "#p-verify", 9.6);
+        tl.fromTo("#L-amber .halo", { scale: 0.94, opacity: 0.55 }, { scale: 1.06, opacity: 1, duration: 0.6, ease: "sine.inOut", yoyo: true, repeat: 6, immediateRender: false }, 9.6);
+        tl.fromTo("#s3-phone", { opacity: 0, y: 80 }, { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" }, 9.65);
+        tl.fromTo("#s3-phone .notif", { opacity: 0, y: -30, scale: 0.95 }, { opacity: 1, y: 0, scale: 1, duration: 0.4, ease: "back.out(1.6)" }, 10.2);
+        tl.fromTo("#s3-side", { opacity: 0, x: 30 }, { opacity: 1, x: 0, duration: 0.45, ease: "power3.out" }, 10.5);
+        tl.fromTo("#s3-tap", { opacity: 0.9, scale: 0.3 }, { opacity: 0, scale: 2.4, duration: 0.5, ease: "power2.out" }, 12.9);
+        tl.to("#s3-no", { scale: 0.95, duration: 0.08, yoyo: true, repeat: 1 }, 12.9);
+
+        /* ===== S4 (14.2 -> 18.4) SCAM BLOCKED ===== */
+        swap("#L-amber", "#L-red", "#g-amber", "#g-red", "#p-verify", "#p-scam", 14.2, 0.25);
+        tl.fromTo("#L-red .halo", { scale: 0.9 }, { scale: 1.12, duration: 0.4, ease: "power3.out" }, 14.2);
+        tl.fromTo("#s4-title", { opacity: 0, scale: 1.25 }, { opacity: 1, scale: 1, duration: 0.45, ease: "power4.out" }, 14.25);
+        tl.fromTo("#s4-sub", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 14.9);
+        tl.fromTo("#s4-dash span", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.3, ease: "power3.out", stagger: 0.15 }, 15.5);
+
+        /* ===== S4b (18.4 -> 21.2) green path ===== */
+        tl.to("#g-red", { opacity: 0, duration: 0.35, ease: "none" }, 18.4);
+        tl.to("#L-red", { opacity: 0.25, duration: 0.35, ease: "none" }, 18.4);
+        tl.to("#p-scam", { opacity: 0, duration: 0.2, ease: "none" }, 18.4);
+        tl.fromTo("#s4b-q", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.35, ease: "power3.out" }, 18.45);
+        swap("#L-red", "#L-green", null, "#g-green", "#p-scam", "#p-ok", 18.9, 0.3);
+        tl.fromTo("#s4b-title", { opacity: 0, scale: 1.2 }, { opacity: 1, scale: 1, duration: 0.4, ease: "power4.out" }, 18.95);
+        tl.fromTo("#s4b-sub", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.35, ease: "power3.out" }, 19.4);
+
+        /* ===== S5 (21.2 -> 26.5) stat + close ===== */
+        tl.fromTo("#s5-stat", { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 21.25);
+        var sEl = document.getElementById("s5-num");
+        var s = { v: 0 };
+        tl.to(s, { v: 4.9, duration: 1.2, ease: "power3.out", onUpdate: function () { sEl.textContent = s.v.toFixed(1); } }, 21.3);
+        tl.to("#s5-stat", { opacity: 0, y: -24, duration: 0.35, ease: "power2.in" }, 23.55);
+        tl.fromTo("#s5-close", { opacity: 0, scale: 0.97 }, { opacity: 1, scale: 1, duration: 0.5, ease: "power3.out" }, 23.9);
+        tl.fromTo("#s5-close .tag", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 24.4);
+        tl.fromTo("#s5-close .url", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 24.9);
+
+        /* ===== MUSIC ===== */
+        tl.fromTo("#bgm", { volume: 0 }, { volume: 0.28, duration: 0.9, ease: "none" }, 0);
+        tl.to("#bgm", { volume: 0, duration: 1.0, ease: "none" }, 25.5);
+
+        /* ===== AUDIO-REACTIVE (subtle accent glow only) ===== */
+        var A = window.__AUDIO;
+        if (A && A.rms && A.rms.length) {
+          var makeSampler = function (i) {
+            return function () {
+              root.style.setProperty("--ar-glow", A.rms[i].toFixed(3));
+              root.style.setProperty("--ar-bass", A.bass[i].toFixed(3));
+            };
+          };
+          var N = Math.min(A.totalFrames, A.rms.length, A.bass.length);
+          for (var f = 0; f < N; f++) tl.call(makeSampler(f), [], f / A.fps);
+        }
+
+        window.__timelines = window.__timelines || {};
+        window.__timelines["main"] = tl;
+        tl.seek(0);
+      })();
+    </script>
+  </body>
+</html>

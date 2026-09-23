@@ -1,0 +1,23 @@
+=== Variant A (LinkedIn) ===
+"Grandma, it's Brenden. I've been arrested. I need bail money. Don't tell Mom."
+
+That call can now be made with a cloned voice and 30 seconds of audio from someone's Instagram. Americans over 60 lost $4.9B to fraud in 2024, up 43% in a year (FBI IC3).
+
+So in 24 hours at the yconic hackathon (RI Startup Week, Providence) I built Porchlight: an AI guardian for an aging parent's phone.
+
+- An AI answers unknown calls and scores them live for scam tactics: urgency, secrecy, gift cards/crypto, impersonation.
+- When a caller claims to be family, the REAL family member's phone asks "Is this you calling?" One tap: No, block it. Or Yes + Face ID.
+- A lamp next to Mom's phone glows red for a scam, green for verified family. She never has to open an app.
+
+A cloned voice can fool Mom. It can't fool her family.
+
+Try it: https://porchlight-hack.web.app
+#RIStartupWeek #yconic #hackathon #AI #elderfraud
+
+=== Variant B (X) ===
+A cloned voice can fool Grandma. It can't fool her family.
+
+Built Porchlight in 24h at the yconic hackathon (RI Startup Week): AI screens the call, the real grandson gets "Is this you calling?", taps No, and the lamp by her phone turns red.
+
+Over-60s lost $4.9B to fraud in 2024.
+https://porchlight-hack.web.app
